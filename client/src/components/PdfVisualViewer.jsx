@@ -809,11 +809,11 @@ export default function PdfVisualViewer({
       <div
         ref={scrollRef}
         onScroll={onScroll}
-        className="relative flex-1 min-h-[520px] max-h-[640px] overflow-auto bg-slate-100/80 p-4 select-text"
+        className="relative flex-1 h-[620px] overflow-auto bg-slate-100/80 p-4 select-text"
       >
         {loading && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/85 backdrop-blur-xs z-20">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 animate-pulse mb-2">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 mb-2">
               <FileText className="h-6 w-6" />
             </div>
             <p className="text-xs font-bold text-indigo-900">Rendering visual document layout...</p>
@@ -844,7 +844,7 @@ export default function PdfVisualViewer({
             <div className="relative inline-block mx-auto">
               <canvas
                 ref={canvasRef}
-                className="rounded-lg shadow-md border border-slate-300 bg-white transition-transform duration-100 block"
+                className="rounded-lg shadow-md border border-slate-300 bg-white block"
               />
 
               {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY (Slide B Only) */}
@@ -879,7 +879,7 @@ export default function PdfVisualViewer({
                               width: `${Math.max(box.w, 14)}px`,
                               height: `${Math.max(box.h, 12)}px`,
                             }}
-                            className={`absolute pointer-events-auto cursor-pointer rounded transition-all duration-150 group ${
+                            className={`absolute pointer-events-auto cursor-pointer rounded transition-colors duration-100 group ${
                               isSelected
                                 ? 'border-2 border-red-600 bg-red-500/35 ring-4 ring-red-400/60 z-30 shadow-[0_0_16px_rgba(239,68,68,0.7)]'
                                 : hl.isColorDiff
@@ -892,11 +892,11 @@ export default function PdfVisualViewer({
                             }}
                             title={`#${hl.index} ${hl.category}: ${hl.details}`}
                           >
-                            {/* Glowing Number Badge on the FIRST line box */}
+                            {/* Static Number Badge on the FIRST line box (Steady, no bounce/pulse) */}
                             {bIdx === 0 && (
                               <span
                                 className={`absolute -top-3 -left-2.5 flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full text-white text-[10px] font-black shadow-md border border-white ${
-                                  hl.isColorDiff ? 'bg-amber-600 animate-bounce' : 'bg-red-600 animate-pulse'
+                                  hl.isColorDiff ? 'bg-amber-600' : 'bg-red-600'
                                 }`}
                               >
                                 {hl.index}

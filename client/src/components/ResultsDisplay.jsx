@@ -114,6 +114,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
   const leftSlideRef = useRef(null);
   const rightSlideRef = useRef(null);
   const isScrollingRef = useRef(null);
+  const isSyncingRef = useRef(false);
   const [syncScroll, setSyncScroll] = useState(true);
 
   // Resizable split-pane state & drag handling
@@ -196,8 +197,8 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
 
   const handleLeftScroll = () => {
     if (!syncScroll || !leftSlideRef.current || !rightSlideRef.current) return;
-    if (isScrollingRef.current === 'right') return;
-    isScrollingRef.current = 'left';
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
 
     const left = leftSlideRef.current;
     const right = rightSlideRef.current;
@@ -207,7 +208,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     if (maxLeftY > 0) {
       const pctY = left.scrollTop / maxLeftY;
       const maxRightY = right.scrollHeight - right.clientHeight;
-      right.scrollTop = pctY * maxRightY;
+      right.scrollTop = Math.round(pctY * maxRightY);
     }
 
     // Horizontal synchronization (for wide/big PDFs)
@@ -215,19 +216,18 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     if (maxLeftX > 0) {
       const pctX = left.scrollLeft / maxLeftX;
       const maxRightX = right.scrollWidth - right.clientWidth;
-      right.scrollLeft = pctX * maxRightX;
+      right.scrollLeft = Math.round(pctX * maxRightX);
     }
 
-    clearTimeout(leftSlideRef.timeout);
-    leftSlideRef.timeout = setTimeout(() => {
-      isScrollingRef.current = null;
-    }, 100);
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false;
+    });
   };
 
   const handleRightScroll = () => {
     if (!syncScroll || !leftSlideRef.current || !rightSlideRef.current) return;
-    if (isScrollingRef.current === 'left') return;
-    isScrollingRef.current = 'right';
+    if (isSyncingRef.current) return;
+    isSyncingRef.current = true;
 
     const left = leftSlideRef.current;
     const right = rightSlideRef.current;
@@ -237,7 +237,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     if (maxRightY > 0) {
       const pctY = right.scrollTop / maxRightY;
       const maxLeftY = left.scrollHeight - left.clientHeight;
-      left.scrollTop = pctY * maxLeftY;
+      left.scrollTop = Math.round(pctY * maxLeftY);
     }
 
     // Horizontal synchronization (for wide/big PDFs)
@@ -245,13 +245,12 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     if (maxRightX > 0) {
       const pctX = right.scrollLeft / maxRightX;
       const maxLeftX = left.scrollWidth - left.clientWidth;
-      left.scrollLeft = pctX * maxLeftX;
+      left.scrollLeft = Math.round(pctX * maxLeftX);
     }
 
-    clearTimeout(rightSlideRef.timeout);
-    rightSlideRef.timeout = setTimeout(() => {
-      isScrollingRef.current = null;
-    }, 100);
+    requestAnimationFrame(() => {
+      isSyncingRef.current = false;
+    });
   };
 
   const handleAddComment = () => {
@@ -1308,7 +1307,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                   >
                     {/* SLIDE A: Staging Master (Error-Free Reference Standard) */}
                     <div
-                      className="w-full lg:transition-[width] duration-75 min-w-0"
+                      className="w-full min-w-0"
                       style={{
                         flex: isDesktop ? `0 0 ${splitRatio}%` : '1 1 100%',
                         width: isDesktop ? `${splitRatio}%` : '100%',
@@ -1356,7 +1355,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
 
                     {/* SLIDE B: Composite Audit Target (With Discrepancies) */}
                     <div
-                      className="w-full lg:transition-[width] duration-75 min-w-0"
+                      className="w-full min-w-0"
                       style={{
                         flex: isDesktop ? `0 0 ${100 - splitRatio}%` : '1 1 100%',
                         width: isDesktop ? `${100 - splitRatio}%` : '100%',
@@ -1401,7 +1400,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                   >
                     {/* LEFT SLIDE: DOCUMENT A (Baseline / Reference) */}
                     <div
-                      className="w-full lg:transition-[width] duration-75 min-w-0"
+                      className="w-full min-w-0"
                       style={{
                         flex: isDesktop ? `0 0 ${splitRatio}%` : '1 1 100%',
                         width: isDesktop ? `${splitRatio}%` : '100%',
@@ -1516,7 +1515,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
 
                     {/* RIGHT SLIDE: DOCUMENT B (Revision / Composite Target) */}
                     <div
-                      className="w-full lg:transition-[width] duration-75 min-w-0"
+                      className="w-full min-w-0"
                       style={{
                         flex: isDesktop ? `0 0 ${100 - splitRatio}%` : '1 1 100%',
                         width: isDesktop ? `${100 - splitRatio}%` : '100%',
