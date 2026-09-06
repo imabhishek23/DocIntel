@@ -1,4 +1,6 @@
 import pdfjs from 'pdfjs-dist/legacy/build/pdf.js';
+import 'pdfjs-dist/legacy/build/pdf.worker.js';
+import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import path from 'node:path';
 import { createWorker } from 'tesseract.js';
@@ -155,132 +157,103 @@ function assembleLineItems(lineItems) {
  * If the PDF has no embedded text layer (scanned/image-only), falls back to OCR.
  */
 async function extractPdfText(buffer) {
-  const uint8 = new Uint8Array(buffer);
-  const doc = await pdfjs.getDocument({ data: uint8, verbosity: 0 }).promise;
   let fullText = '';
 
-  for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
-    const page = await doc.getPage(pageNum);
-    // Populate font objects in page.commonObjs
-    await page.getOperatorList();
-    const textContent = await page.getTextContent();
-    const items = textContent.items;
-
-    if (!items || items.length === 0) continue;
-
-    const pageLines = [];
-    let currentLine = [];
-    let currentBaselineY = null;
-    let prevBaselineY = null;
-    let avgItemHeight = 12;
-
-    for (const item of items) {
-      if (!item.str && item.str !== ' ') continue;
-      const y = item.transform[5];
-      const height = item.height || 12;
-      avgItemHeight = height;
-      const threshold = item.height ? Math.max(7, item.height * 0.7) : 7;
-
-      // Extract bold & italic font styling from page.commonObjs
-      let isBold = false;
-      let isItalic = false;
-      if (item.fontName && page.commonObjs.has(item.fontName)) {
-        const font = page.commonObjs.get(item.fontName);
-        if (font) {
-          isBold = !!font.bold || (typeof font.name === 'string' && /bold|black|heavy/i.test(font.name));
-          isItalic = !!font.italic || (typeof font.name === 'string' && /italic|oblique/i.test(font.name));
-        }
-      }
-
-      const itemData = {
-        str: item.str,
-        x: item.transform[4],
-        width: item.width || 0,
-        isBold,
-        isItalic,
-      };
-
-      if (currentBaselineY === null || Math.abs(y - currentBaselineY) > threshold) {
-        if (currentLine.length > 0) {
-          const assembled = assembleLineItems(currentLine);
-          if (assembled) {
-            // Check vertical gap to determine if this is a paragraph break
-            if (prevBaselineY !== null) {
-              const deltaY = Math.abs(prevBaselineY - currentBaselineY);
-              if (deltaY > Math.max(18, avgItemHeight * 1.5)) {
-                pageLines.push(''); // Empty line for paragraph separation
-              }
-            }
-            pageLines.push(assembled);
-            prevBaselineY = currentBaselineY;
-          }
-        }
-        currentLine = [itemData];
-        currentBaselineY = y;
-      } else {
-        currentLine.push(itemData);
-      }
-    }
-
-    if (currentLine.length > 0) {
-      const assembled = assembleLineItems(currentLine);
-      if (assembled) {
-        pageLines.push(assembled);
-      }
-    }
-
-    const pageText = pageLines.join('\n').trim();
-    if (pageText) {
-      fullText += pageText + '\n\n';
-    }
-  }
-
-  // Fallback: If no text was extracted from any page, check if pages are scanned images
-  if (!fullText || fullText.trim().length === 0) {
-    console.log(`[PDF] No text layer found across ${doc.numPages} pages. Checking for scanned page images / OCR fallback...`);
-    let ocrText = '';
+  // Attempt 1: Advanced layout and styling extraction with pdfjs-dist
+  try {
+    const uint8 = new Uint8Array(buffer);
+    const doc = await pdfjs.getDocument({ data: uint8, verbosity: 0 }).promise;
 
     for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
-      try {
-        const page = await doc.getPage(pageNum);
-        const ops = await page.getOperatorList();
+      const page = await doc.getPage(pageNum);
+      // Populate font objects in page.commonObjs
+      await page.getOperatorList();
+      const textContent = await page.getTextContent();
+      const items = textContent.items;
 
-        for (let i = 0; i < ops.fnArray.length; i++) {
-          const fn = ops.fnArray[i];
-          if (fn === pdfjs.OPS.paintImageXObject || fn === pdfjs.OPS.paintInlineImageXObject) {
-            const imgName = ops.argsArray[i][0];
-            try {
-              const imgObj = await new Promise((resolve) => {
-                page.objs.get(imgName, (obj) => resolve(obj));
-              });
+      if (!items || items.length === 0) continue;
 
-              if (imgObj && imgObj.data && imgObj.width && imgObj.height) {
-                if (!ocrWorkerInstance) {
-                  ocrWorkerInstance = await createWorker('eng', 1, {
-                    errorHandler: (err) => console.warn('[OCR Worker Warning]:', err),
-                  });
-                }
-                const ocrRes = await ocrWorkerInstance.recognize({
-                  data: imgObj.data,
-                  width: imgObj.width,
-                  height: imgObj.height,
-                });
-                if (ocrRes?.data?.text?.trim()) {
-                  ocrText += ocrRes.data.text.trim() + '\n\n';
-                }
-              }
-            } catch (imgErr) {
-              console.warn(`[OCR] Image extraction failed for ${imgName}:`, imgErr.message);
-            }
+      const pageLines = [];
+      let currentLine = [];
+      let currentBaselineY = null;
+      let prevBaselineY = null;
+      let avgItemHeight = 12;
+
+      for (const item of items) {
+        if (!item.str && item.str !== ' ') continue;
+        const y = item.transform[5];
+        const height = item.height || 12;
+        avgItemHeight = height;
+        const threshold = item.height ? Math.max(7, item.height * 0.7) : 7;
+
+        // Extract bold & italic font styling from page.commonObjs
+        let isBold = false;
+        let isItalic = false;
+        if (item.fontName && page.commonObjs.has(item.fontName)) {
+          const font = page.commonObjs.get(item.fontName);
+          if (font) {
+            isBold = !!font.bold || (typeof font.name === 'string' && /bold|black|heavy/i.test(font.name));
+            isItalic = !!font.italic || (typeof font.name === 'string' && /italic|oblique/i.test(font.name));
           }
         }
-      } catch (pageErr) {
-        console.warn(`[OCR] Page ${pageNum} processing error:`, pageErr.message);
+
+        const itemData = {
+          str: item.str,
+          x: item.transform[4],
+          width: item.width || 0,
+          isBold,
+          isItalic,
+        };
+
+        if (currentBaselineY === null || Math.abs(y - currentBaselineY) > threshold) {
+          if (currentLine.length > 0) {
+            const assembled = assembleLineItems(currentLine);
+            if (assembled) {
+              // Check vertical gap to determine if this is a paragraph break
+              if (prevBaselineY !== null) {
+                const deltaY = Math.abs(prevBaselineY - currentBaselineY);
+                if (deltaY > Math.max(18, avgItemHeight * 1.5)) {
+                  pageLines.push(''); // Empty line for paragraph separation
+                }
+              }
+              pageLines.push(assembled);
+              prevBaselineY = currentBaselineY;
+            }
+          }
+          currentLine = [itemData];
+          currentBaselineY = y;
+        } else {
+          currentLine.push(itemData);
+        }
+      }
+
+      if (currentLine.length > 0) {
+        const assembled = assembleLineItems(currentLine);
+        if (assembled) {
+          pageLines.push(assembled);
+        }
+      }
+
+      const pageText = pageLines.join('\n').trim();
+      if (pageText) {
+        fullText += pageText + '\n\n';
       }
     }
+  } catch (pdfjsErr) {
+    console.warn('[PDF] pdfjs extraction encountered an issue, trying pdf-parse fallback:', pdfjsErr.message);
+  }
 
-    if (ocrText.trim().length > 0) {
-      return ocrText.trim();
+  // Attempt 2: If pdfjs failed or returned no text, fall back to pure Node pdf-parse
+  if (!fullText || fullText.trim().length === 0) {
+    try {
+      console.log('[PDF] Running robust pdf-parse engine...');
+      const parseResult = await pdfParse(buffer);
+      if (parseResult && parseResult.text && parseResult.text.trim().length > 0) {
+        fullText = parseResult.text.trim();
+        console.log(`[PDF] pdf-parse successfully extracted ${fullText.length} characters.`);
+      }
+    } catch (parseErr) {
+      console.warn('[PDF] pdf-parse fallback error:', parseErr.message);
     }
   }
 
