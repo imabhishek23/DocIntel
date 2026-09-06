@@ -105,17 +105,6 @@ function computePageHighlights(items, viewport, discrepancies, dpr) {
 
     const normTarget = cleanTarget.replace(/\s+/g, ' ').toLowerCase();
 
-    // Strategy 1: Contiguous consecutive items sequence (sliding window up to 14 items)
-    // Runs first for phrases/headings so banners, sentences, and multi-line items are matched with high fidelity
-    if (normTarget.includes(' ') || cleanTarget.length > 12) {
-      let bestSpan = null;
-      for (let i = 0; i < itemBoxes.length; i++) {
-        let combined = '';
-        const span = [];
-        for (let j = i; j < Math.min(itemBoxes.length, i + 14); j++) {
-          const it = itemBoxes[j];
-          span.push(it);
-          combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
     // ── STRATEGY 1: SINGLE WORD / TOKEN / PUNCTUATION / SYMBOL / SPACE ──
     // For single words (e.g. gastrointestinal, SPONSORED, health, recipients, from), mark ONLY that exact word box!
     let candidates = [];
@@ -124,18 +113,13 @@ function computePageHighlights(items, viewport, discrepancies, dpr) {
       if (itText.includes(normTarget)) {
         let isExactWord = false;
         if (!normTarget.includes(' ')) {
-          const re = new RegExp(`\\b${normTarget.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&')}\\b`, 'i');
+          const re = new RegExp(`\\b${normTarget.replace(/[-[\]{}()*+?.,\\^$|#\\s]/g, '\\$&')}\\b`, 'i');
           isExactWord = re.test(itText);
         }
         candidates.push({ it, isExactWord, matchIdx: itText.indexOf(normTarget) });
       }
     }
 
-          const normClean = normTarget.replace(/[^a-z0-9]/g, '');
-          const combinedClean = combined.replace(/[^a-z0-9]/g, '');
-          if (normClean.length > 5 && (combinedClean.includes(normClean) || combined.includes(normTarget))) {
-            bestSpan = span.slice();
-            break;
     let bestSingle = null;
     if (candidates.length === 1) {
       bestSingle = candidates[0];
@@ -158,58 +142,20 @@ function computePageHighlights(items, viewport, discrepancies, dpr) {
             bestSingle = cand;
           }
         }
-        if (bestSpan) break;
       }
-
-      if (bestSpan && bestSpan.length > 0) {
-        const minX = Math.min(...bestSpan.map((m) => m.x));
-        const minY = Math.min(...bestSpan.map((m) => m.y));
-        const maxX = Math.max(...bestSpan.map((m) => m.x + m.w));
-        const maxY = Math.max(...bestSpan.map((m) => m.y + m.h));
-
-        highlights.push({
-          id: err.id || `hl_${errIdx}`,
-          index: errIdx + 1,
-          box: {
-            x: Math.round(minX - 2),
-            y: Math.round(minY - 2),
-            w: Math.round(maxX - minX + 4),
-            h: Math.round(maxY - minY + 4),
-          },
-          discrepancy: err,
-          category: err.category,
-          expected: err.expected,
-          found: err.found,
-          details: err.details,
-        });
-        return;
       if (!bestSingle) {
         bestSingle = candidates.find((c) => c.isExactWord) || candidates[0];
       }
     }
 
-    // Strategy 2: Substring match inside a single item
-    const singleMatch = itemBoxes.find((it) =>
-      it.cleanStr.toLowerCase().includes(normTarget)
-    );
-
-    if (singleMatch) {
-      const idx = singleMatch.cleanStr.toLowerCase().indexOf(normTarget);
-      const charRatio = singleMatch.cleanStr.length > 0 ? idx / singleMatch.cleanStr.length : 0;
     if (bestSingle) {
       const { it, matchIdx } = bestSingle;
       const charRatio = it.cleanStr.length > 0 ? Math.max(0, matchIdx) / it.cleanStr.length : 0;
       const widthRatio =
-        singleMatch.cleanStr.length > 0
-          ? Math.min(1, cleanTarget.length / singleMatch.cleanStr.length)
         it.cleanStr.length > 0
           ? Math.min(1, cleanTarget.length / it.cleanStr.length)
           : 1;
 
-      const x = singleMatch.x + charRatio * singleMatch.w;
-      const w = Math.max(16, widthRatio * singleMatch.w);
-      const y = singleMatch.y;
-      const h = Math.max(14, singleMatch.h);
       const x = it.x + charRatio * it.w;
       const w = Math.max(14, widthRatio * it.w);
       const y = it.y;
@@ -225,12 +171,6 @@ function computePageHighlights(items, viewport, discrepancies, dpr) {
       highlights.push({
         id: err.id || `hl_${errIdx}`,
         index: errIdx + 1,
-        box: {
-          x: Math.round(x - 2),
-          y: Math.round(y - 2),
-          w: Math.round(w + 4),
-          h: Math.round(h + 4),
-        },
         target: cleanTarget,
         box,
         boxes: [box],
@@ -354,12 +294,6 @@ function computePageHighlights(items, viewport, discrepancies, dpr) {
           highlights.push({
             id: err.id || `hl_${errIdx}`,
             index: errIdx + 1,
-            box: {
-              x: Math.round(minX - 2),
-              y: Math.round(minY - 2),
-              w: Math.round(maxX - minX + 4),
-              h: Math.round(maxY - minY + 4),
-            },
             target: cleanTarget,
             box,
             boxes: [box],
@@ -422,12 +356,6 @@ function detectColorDifferences(canvasA, canvasB, existingHighlights, dpr) {
 
           // Check if already covered by an existing text discrepancy
           const overlaps = existingHighlights.some((hl) => {
-            const bx = hl.box;
-            return (
-              cssX < bx.x + bx.w + 8 &&
-              cssX + cssW > bx.x - 8 &&
-              cssY < bx.y + bx.h + 8 &&
-              cssY + cssH > bx.y - 8
             const boxes = hl.boxes && hl.boxes.length > 0 ? hl.boxes : (hl.box ? [hl.box] : []);
             return boxes.some(
               (bx) =>
@@ -478,19 +406,12 @@ function detectColorDifferences(canvasA, canvasB, existingHighlights, dpr) {
 
     return clusters
       .filter((cl) => cl.count >= 2)
-      .map((cl, i) => ({
-        id: `col_diff_${i + 1}`,
-        index: existingHighlights.length + i + 1,
-        box: {
       .map((cl, i) => {
         const box = {
           x: Math.round(cl.x - 2),
           y: Math.round(cl.y - 2),
           w: Math.round(cl.w + 4),
           h: Math.round(cl.h + 4),
-        },
-        category: 'Color Mismatch',
-        isColorDiff: true,
         };
         return {
           id: `col_diff_${i + 1}`,
@@ -499,19 +420,18 @@ function detectColorDifferences(canvasA, canvasB, existingHighlights, dpr) {
           boxes: [box],
           category: 'Color Mismatch',
           isColorDiff: true,
-        discrepancy: {
-          id: `col_diff_${i + 1}`,
-          category: 'Color Mismatch',
-          type: 'color_shift',
-          severity: 'high',
+          discrepancy: {
+            id: `col_diff_${i + 1}`,
+            category: 'Color Mismatch',
+            type: 'color_shift',
+            severity: 'high',
+            expected: 'Original Staging Color',
+            found: 'Altered Color / Visual Tint',
+            details: 'Visual Color Discrepancy: Visual element or color tint differs from Staging baseline standard.',
+          },
           expected: 'Original Staging Color',
           found: 'Altered Color / Visual Tint',
           details: 'Visual Color Discrepancy: Visual element or color tint differs from Staging baseline standard.',
-        },
-        expected: 'Original Staging Color',
-        found: 'Altered Color / Visual Tint',
-        details: 'Visual Color Discrepancy: Visual element or color tint differs from Staging baseline standard.',
-      }));
         };
       });
   } catch (err) {
@@ -949,45 +869,6 @@ export default function PdfVisualViewer({
                         : [];
 
                     return (
-                      <div
-                        key={hl.id}
-                        style={{
-                          left: `${hl.box.x}px`,
-                          top: `${hl.box.y}px`,
-                          width: `${Math.max(hl.box.w, 20)}px`,
-                          height: `${Math.max(hl.box.h, 16)}px`,
-                        }}
-                        className={`absolute pointer-events-auto cursor-pointer rounded transition-all duration-150 group ${
-                          isSelected
-                            ? 'border-2 border-red-600 bg-red-500/35 ring-4 ring-red-400/60 z-30 shadow-[0_0_16px_rgba(239,68,68,0.7)]'
-                            : hl.isColorDiff
-                            ? 'border-2 border-amber-500 bg-amber-500/25 hover:bg-amber-500/40 hover:border-amber-600 z-15 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                            : 'border-2 border-rose-500 bg-rose-500/20 hover:bg-rose-500/35 hover:border-rose-600 z-10 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
-                        }`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedError(isSelected ? null : hl.discrepancy);
-                        }}
-                        title={`#${hl.index} ${hl.category}: ${hl.details}`}
-                      >
-                        {/* Glowing Number Badge on the box */}
-                        <span
-                          className={`absolute -top-3 -left-2.5 flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full text-white text-[10px] font-black shadow-md border border-white ${
-                            hl.isColorDiff ? 'bg-amber-600 animate-bounce' : 'bg-red-600 animate-pulse'
-                          }`}
-                        >
-                          {hl.index}
-                        </span>
-
-                        {/* Hover Tooltip Card */}
-                        <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs p-2.5 rounded-xl bg-slate-900/95 text-white text-[11px] shadow-2xl z-50 pointer-events-none backdrop-blur-xs border border-slate-700 animate-fadeIn">
-                          <div className="flex items-center gap-1.5 font-bold text-rose-300">
-                            <span className="rounded bg-rose-500/30 px-1.5 py-0.5 text-[9px] uppercase border border-rose-400/30 font-extrabold">
-                              #{hl.index} {hl.category}
-                            </span>
-                            {hl.isColorDiff && (
-                              <span className="rounded bg-amber-500/30 text-amber-200 px-1 py-0.5 text-[8px] uppercase border border-amber-400/30">
-                                Visual Color
                       <React.Fragment key={hl.id}>
                         {boxes.map((box, bIdx) => (
                           <div
@@ -1045,17 +926,6 @@ export default function PdfVisualViewer({
                               </div>
                             </div>
                           </div>
-                          <div className="text-slate-200 mt-1 leading-snug line-clamp-2">
-                            {hl.details}
-                          </div>
-                          <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1.5 pt-1 border-t border-slate-800">
-                            <span>
-                              Expected: <strong className="text-emerald-300">{hl.expected}</strong>
-                            </span>
-                            <span className="ml-2 font-bold text-indigo-300">Click to inspect</span>
-                          </div>
-                        </div>
-                      </div>
                         ))}
                       </React.Fragment>
                     );
