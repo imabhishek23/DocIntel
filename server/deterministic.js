@@ -64,8 +64,6 @@ export function extractDeterministicFields(text) {
  * - Word additions, deletions, replacements, and grammatical typos
  */
 export function detectProofreadingErrors(textA, textB) {
-  const cleanA = (textA || '').replace(/<\/?[bi]\b[^>]*>/gi, '');
-  const cleanB = (textB || '').replace(/<\/?[bi]\b[^>]*>/gi, '');
   const normBreaks = (t) =>
     (t || '')
       .replace(/([^\n])\n([^\n])/g, '$1 $2')
