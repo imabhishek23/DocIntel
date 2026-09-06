@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 client/node_modules/
 server/node_modules/
@@ -9,10 +9,13 @@ dist/
 
 # Environment and sensitive secrets
 .env
-.env.*
+.env.local
+.env.*.local
 server/.env
-server/.env.*
+server/.env.local
 *.env
+!.env.example
+!server/.env.example
 
 # Local data & logs
 server/data/
