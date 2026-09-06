@@ -6,36 +6,46 @@ import mongoose from 'mongoose';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.join(__dirname, 'data');
+const DATA_DIR = process.env.VERCEL ? path.join('/tmp', 'data') : path.join(__dirname, 'data');
 const JSON_FILE = path.join(DATA_DIR, 'reviews.json');
 
-// Ensure local fallback data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-if (!fs.existsSync(JSON_FILE)) {
-  fs.writeFileSync(JSON_FILE, JSON.stringify([], null, 2), 'utf-8');
+let memoryStore = [];
+
+// Ensure local fallback data directory exists safely (resilient to read-only environments)
+try {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+  if (!fs.existsSync(JSON_FILE)) {
+    fs.writeFileSync(JSON_FILE, JSON.stringify([], null, 2), 'utf-8');
+  }
+} catch (err) {
+  console.warn('[STORAGE] Filesystem init warning (using in-memory fallback):', err.message);
 }
 
 let isMongoConnected = false;
 let mongoModel = null;
 
-// Local JSON file helpers
+// Local JSON file helpers with memory fallback
 function readLocalReviews() {
   try {
-    const raw = fs.readFileSync(JSON_FILE, 'utf-8');
-    return JSON.parse(raw);
+    if (fs.existsSync(JSON_FILE)) {
+      const raw = fs.readFileSync(JSON_FILE, 'utf-8');
+      return JSON.parse(raw);
+    }
+    return memoryStore;
   } catch (err) {
-    console.error('[STORAGE] Error reading local JSON store:', err.message);
-    return [];
+    console.warn('[STORAGE] Error reading local JSON store:', err.message);
+    return memoryStore;
   }
 }
 
 function writeLocalReviews(items) {
+  memoryStore = items;
   try {
     fs.writeFileSync(JSON_FILE, JSON.stringify(items, null, 2), 'utf-8');
   } catch (err) {
-    console.error('[STORAGE] Error writing local JSON store:', err.message);
+    console.warn('[STORAGE] Error writing local JSON store (using in-memory):', err.message);
   }
 }
 
