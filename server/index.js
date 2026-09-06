@@ -398,25 +398,30 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start listening with port fallback
-const server = app.listen(PORT, () => {
-  console.log(`=========================================`);
-  console.log(`🚀 DocIntel Smart Reviewer Server`);
-  console.log(`📡 URL: http://localhost:${PORT}`);
-  console.log(`=========================================`);
-});
+// Start listening with port fallback (when not running as serverless function)
+let server;
+if (process.env.VERCEL !== '1') {
+  server = app.listen(PORT, () => {
+    console.log(`=========================================`);
+    console.log(`🚀 DocIntel Smart Reviewer Server`);
+    console.log(`📡 URL: http://localhost:${PORT}`);
+    console.log(`=========================================`);
+  });
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    const nextPort = Number(PORT) + 1;
-    console.warn(`[SERVER] Port ${PORT} is in use, retrying on port ${nextPort}...`);
-    app.listen(nextPort, () => {
-      console.log(`=========================================`);
-      console.log(`🚀 DocIntel Smart Reviewer Server`);
-      console.log(`📡 URL: http://localhost:${nextPort}`);
-      console.log(`=========================================`);
-    });
-  } else {
-    console.error('[SERVER] Server listen error:', err);
-  }
-});
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      const nextPort = Number(PORT) + 1;
+      console.warn(`[SERVER] Port ${PORT} is in use, retrying on port ${nextPort}...`);
+      app.listen(nextPort, () => {
+        console.log(`=========================================`);
+        console.log(`🚀 DocIntel Smart Reviewer Server`);
+        console.log(`📡 URL: http://localhost:${nextPort}`);
+        console.log(`=========================================`);
+      });
+    } else {
+      console.error('[SERVER] Server listen error:', err);
+    }
+  });
+}
+
+export default app;
