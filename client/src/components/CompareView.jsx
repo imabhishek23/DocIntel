@@ -33,6 +33,54 @@ Information publicly known shall only be excluded if documented by third-party c
 4. REMEDIES & LIABILITY
 Beta Inc agrees to unconditionally indemnify Alpha Ltd for all direct and consequential damages resulting from any inadvertent breach. Limitation of liability is explicitly waived.`;
 
+const SAMPLE_ISI_DOC_A = `CLINICAL STUDY SUMMARY & PRESCRIBING INFORMATION (APPROVED WORD MASTER)
+
+INDICATION & USAGE
+Vandaprex® is indicated for the treatment of adult patients with moderate-to-severe plaque psoriasis who are candidates for systemic therapy or phototherapy.
+
+IMPORTANT SAFETY INFORMATION
+Contraindications:
+Vandaprex is contraindicated in patients with a history of serious hypersensitivity reaction to vandaprex or to any of the excipients.
+
+Warnings and Precautions:
+Infections: Serious infections, including tuberculosis (TB) and bacterial sepsis, have been reported in patients receiving Vandaprex. Evaluate patients for TB infection prior to initiating treatment.
+Malignancies: Malignancies were observed in clinical studies with Vandaprex.
+Hypersensitivity: If a serious allergic reaction occurs, discontinue administration immediately and initiate appropriate therapy.
+
+Adverse Reactions:
+The most common adverse reactions (incidence ≥ 1%) are upper respiratory tract infections, headache, fatigue, diarrhea, and injection site reactions.
+
+DOSING & ADMINISTRATION
+The recommended dose is 100 mg administered by subcutaneous injection at Weeks 0 and 4, followed by 100 mg every 12 weeks thereafter. Store refrigerated at 2°C to 8°C (36°F to 46°F).`;
+
+const SAMPLE_ISI_DOC_B = `PROMOTIONAL HCP EMAIL COMPOSITE (PDF PROMOTIONAL TARGET)
+
+Vandaprex® — Sustained Clear Skin for Your Psoriasis Patients
+
+SELECTED IMPORTANT SAFETY INFORMATION
+Vandaprex is contraindicated in patients with a history of serious hypersensitivity reaction to vandaprex or to any of the excipients.
+Serious infections, including tuberculosis (TB) and bacterial sepsis, have been reported in patients receiving Vandaprex. Evaluate patients for TB infection prior to initiating treatment.
+The most common adverse reactions are upper respiratory tract infections, headache, fatigue, diarrhea, and injection site reactions.
+
+PATIENT PROFILE SNAPSHOT: CLINICAL EFFICACY AT WEEK 16
+Over 82% of patients achieved PASI 90 response at Week 16 with quarterly dosing.
+Recommended dose is 100 mg administered by subcutaneous injection at Weeks 0 and 4, followed by 100 mg every 12 weeks thereafter. Store refrigerated at 2°C to 8°C (36°F to 46°F).
+
+IMPORTANT SAFETY INFORMATION (CONT’D) & PRESCRIBING INFORMATION
+Indication:
+Vandaprex® is indicated for the treatment of adult patients with moderate-to-severe plaque psoriasis who are candidates for systemic therapy or phototherapy.
+
+Contraindications:
+Vandaprex is contraindicated in patients with a history of serious hypersensitivity reaction to vandaprex or to any of the excipients.
+
+Warnings and Precautions:
+Infections: Serious infections, including tuberculosis (TB) and bacterial sepsis, have been reported in patients receiving Vandaprex. Evaluate patients for TB infection prior to initiating treatment.
+Malignancies: Malignancies were observed in clinical studies with Vandaprex.
+Hypersensitivity: If a serious allergic reaction occurs, discontinue administration immediately and initiate appropriate therapy.
+
+Adverse Reactions:
+The most common adverse reactions (incidence ≥ 1%) are upper respiratory tract infections, headache, fatigue, diarrhea, and injection site reactions.`;
+
 export default function CompareView({ onOpenQA }) {
   const [fileA, setFileA] = useState(null);
   const [textA, setTextA] = useState('');
@@ -81,10 +129,10 @@ export default function CompareView({ onOpenQA }) {
       const data = await compareDocuments({
         fileA,
         textA: fileA ? null : textA,
-        nameA: fileA ? fileA.name : 'Original Draft (A)',
+        nameA: fileA ? fileA.name : (textA.includes('Vandaprex') ? 'Approved Word Master' : 'Original Draft (A)'),
         fileB,
         textB: fileB ? null : textB,
-        nameB: fileB ? fileB.name : 'Revised Draft (B)',
+        nameB: fileB ? fileB.name : (textB.includes('Vandaprex') ? 'Promotional PDF Target' : 'Revised Draft (B)'),
       });
 
       setResult({
@@ -95,6 +143,10 @@ export default function CompareView({ onOpenQA }) {
         pdfUrlB: pdfUrlB || data.pdfB,
         imageA: imgUrlA || data.imageA,
         imageB: imgUrlB || data.imageB,
+        docxHtmlA: data.docxHtmlA || null,
+        docxHtmlB: data.docxHtmlB || null,
+        matchingTokens: data.matchingTokens || [],
+        isiAudit: data.isiAudit || null,
       });
     } catch (err) {
       setError(err.message || 'Comparison failed.');
@@ -111,6 +163,14 @@ export default function CompareView({ onOpenQA }) {
     setTextA(SAMPLE_DOC_A);
     setFileB(null);
     setTextB(SAMPLE_DOC_B);
+    setError(null);
+  };
+
+  const handleLoadIsiSample = () => {
+    setFileA(null);
+    setTextA(SAMPLE_ISI_DOC_A);
+    setFileB(null);
+    setTextB(SAMPLE_ISI_DOC_B);
     setError(null);
   };
 
@@ -184,14 +244,24 @@ export default function CompareView({ onOpenQA }) {
       {/* Action card */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <button
-            type="button"
-            onClick={handleLoadSample}
-            className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition"
-          >
-            <FileCode className="h-3.5 w-3.5" />
-            Load Sample NDA Revision (Quick Demo)
-          </button>
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="button"
+              onClick={handleLoadSample}
+              className="flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 transition cursor-pointer"
+            >
+              <FileCode className="h-3.5 w-3.5" />
+              Load Sample NDA (Quick Demo)
+            </button>
+            <button
+              type="button"
+              onClick={handleLoadIsiSample}
+              className="flex items-center gap-1.5 text-xs font-bold text-purple-700 bg-purple-50 hover:bg-purple-100 border border-purple-200 px-3 py-1.5 rounded-lg transition cursor-pointer shadow-2xs"
+            >
+              <Sparkles className="h-3.5 w-3.5 text-purple-600" />
+              🛡 Load Sample ISI Audit (Word Approved Master vs Promo PDF)
+            </button>
+          </div>
 
           <button
             id="compare-submit-btn"

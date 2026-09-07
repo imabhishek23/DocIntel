@@ -48,8 +48,12 @@ function toUint8Array(dataUrlOrBase64) {
 /**
  * Maps proofreading discrepancies to exact CSS bounding boxes on the PDF canvas page
  */
-function computePageHighlights(items, viewport, discrepancies, dpr) {
-  if (!items || items.length === 0 || !discrepancies || discrepancies.length === 0) {
+function computePageHighlights(items, viewport, discrepancies = [], matchingTokens = [], dpr = 1) {
+  if (
+    !items ||
+    items.length === 0 ||
+    ((!discrepancies || discrepancies.length === 0) && (!matchingTokens || matchingTokens.length === 0))
+  ) {
     return [];
   }
 
@@ -309,6 +313,65 @@ function computePageHighlights(items, viewport, discrepancies, dpr) {
     }
   });
 
+  // ── GREEN HIGHLIGHTS: APPROVED MASTER WORD MATCHES ──
+  if (matchingTokens && matchingTokens.length > 0) {
+    matchingTokens.forEach((token, tIdx) => {
+      const targetStr = (token.text || '').trim();
+      if (!targetStr || targetStr.length < 3) return;
+
+      const normTarget = targetStr.replace(/\s+/g, ' ').toLowerCase();
+
+      for (let i = 0; i < itemBoxes.length; i++) {
+        let combined = '';
+        const span = [];
+        for (let j = i; j < Math.min(itemBoxes.length, i + 6); j++) {
+          const it = itemBoxes[j];
+          span.push(it);
+          combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
+
+          if (combined.includes(normTarget)) {
+            const minX = Math.min(...span.map((m) => m.x));
+            const minY = Math.min(...span.map((m) => m.y));
+            const maxX = Math.max(...span.map((m) => m.x + m.w));
+            const maxY = Math.max(...span.map((m) => m.y + m.h));
+
+            const box = {
+              x: Math.round(minX - 1),
+              y: Math.round(minY - 1),
+              w: Math.round(maxX - minX + 2),
+              h: Math.round(maxY - minY + 2),
+            };
+
+            // Avoid colliding with an existing red error box
+            const collidesWithRed = highlights.some((h) => {
+              if (h.isMatch) return false;
+              const hx = h.box?.x || 0;
+              const hy = h.box?.y || 0;
+              return Math.abs(hx - box.x) < 8 && Math.abs(hy - box.y) < 8;
+            });
+
+            if (!collidesWithRed) {
+              highlights.push({
+                id: `approved_match_${tIdx}_${i}`,
+                index: tIdx + 1,
+                target: targetStr,
+                box,
+                boxes: [box],
+                isMatch: true,
+                isError: false,
+                category: 'Approved Word Match',
+                details: `Approved ISI Match: "${targetStr}" matches approved Word master`,
+                expected: targetStr,
+                found: targetStr,
+              });
+            }
+            break;
+          }
+        }
+      }
+    });
+  }
+
   return highlights;
 }
 
@@ -456,6 +519,7 @@ export default function PdfVisualViewer({
   scrollRef,
   onScroll,
   discrepancies = [],
+  matchingTokens = [],
   selectedDiscrepancyId = null,
   onOpenComment,
   onRenderSuccess,
@@ -469,6 +533,7 @@ export default function PdfVisualViewer({
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pageHighlights, setPageHighlights] = useState([]);
   const [selectedError, setSelectedError] = useState(null);
+  const [highlightFilter, setHighlightFilter] = useState('all'); // 'all' | 'errors' | 'matches'
   const [copiedText, setCopiedText] = useState(false);
   const [canvasDimensions, setCanvasDimensions] = useState({ width: 0, height: 0 });
 
@@ -660,6 +725,7 @@ export default function PdfVisualViewer({
               textContent.items,
               viewport,
               discrepancies,
+              matchingTokens,
               dpr
             );
 
@@ -708,7 +774,7 @@ export default function PdfVisualViewer({
         renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, pageNumber, scale, isImageMode, isAuditTarget, discrepancies]);
+  }, [pdfDoc, pageNumber, scale, isImageMode, isAuditTarget, discrepancies, matchingTokens]);
 
   const handleCopySnippet = (snippet) => {
     navigator.clipboard.writeText(snippet);
@@ -767,7 +833,7 @@ export default function PdfVisualViewer({
             <>
               <span className="flex h-2.5 w-2.5 rounded-full bg-rose-500 animate-ping"></span>
               <span>
-                <strong>Composite Revision View:</strong> Original colors, banners & layout. Discrepancies highlighted in red below.
+                <strong>Composite Revision View:</strong> Original colors, banners & layout. Discrepancies in red, approved master matches in green.
               </span>
             </>
           ) : (
@@ -780,29 +846,71 @@ export default function PdfVisualViewer({
           )}
         </div>
 
-        {totalPages > 1 && (
-          <div className="flex items-center gap-1.5 bg-white/80 border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] font-bold text-slate-700">
-            <button
-              onClick={() => onPageChange && onPageChange(Math.max(1, pageNumber - 1))}
-              disabled={pageNumber <= 1}
-              className="hover:text-indigo-600 disabled:opacity-40 cursor-pointer"
-              title="Previous Page"
-            >
-              <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
-            <span>
-              Page {pageNumber} of {totalPages}
-            </span>
-            <button
-              onClick={() => onPageChange && onPageChange(Math.min(totalPages, pageNumber + 1))}
-              disabled={pageNumber >= totalPages}
-              className="hover:text-indigo-600 disabled:opacity-40 cursor-pointer"
-              title="Next Page"
-            >
-              <ChevronRight className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAuditTarget && (
+            <div className="flex items-center gap-1 bg-white/90 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold">
+              <button
+                type="button"
+                onClick={() => setHighlightFilter('all')}
+                className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                  highlightFilter === 'all'
+                    ? 'bg-slate-800 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Overlays
+              </button>
+              <button
+                type="button"
+                onClick={() => setHighlightFilter('errors')}
+                className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
+                  highlightFilter === 'errors'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'text-rose-700 hover:bg-rose-100'
+                }`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                Red Errors ({discrepancies.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setHighlightFilter('matches')}
+                className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
+                  highlightFilter === 'matches'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-emerald-700 hover:bg-emerald-100'
+                }`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                Green Matches ({pageHighlights.filter((h) => h.isMatch).length || matchingTokens.length})
+              </button>
+            </div>
+          )}
+
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1.5 bg-white/80 border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] font-bold text-slate-700">
+              <button
+                onClick={() => onPageChange && onPageChange(Math.max(1, pageNumber - 1))}
+                disabled={pageNumber <= 1}
+                className="hover:text-indigo-600 disabled:opacity-40 cursor-pointer"
+                title="Previous Page"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <span>
+                Page {pageNumber} of {totalPages}
+              </span>
+              <button
+                onClick={() => onPageChange && onPageChange(Math.min(totalPages, pageNumber + 1))}
+                disabled={pageNumber >= totalPages}
+                className="hover:text-indigo-600 disabled:opacity-40 cursor-pointer"
+                title="Next Page"
+              >
+                <ChevronRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Scrollable Viewport with Synchronized Scrolling */}
@@ -856,80 +964,110 @@ export default function PdfVisualViewer({
                     height: `${canvasDimensions.height}px`,
                   }}
                 >
-                  {pageHighlights.map((hl) => {
-                    const isSelected =
-                      selectedError?.id === hl.discrepancy?.id ||
-                      selectedError?.id === hl.id;
+                  {pageHighlights
+                    .filter((hl) => {
+                      if (highlightFilter === 'errors') return !hl.isMatch;
+                      if (highlightFilter === 'matches') return !!hl.isMatch;
+                      return true;
+                    })
+                    .map((hl) => {
+                      const isSelected =
+                        selectedError?.id === hl.discrepancy?.id ||
+                        selectedError?.id === hl.id;
 
-                    const boxes =
-                      hl.boxes && hl.boxes.length > 0
-                        ? hl.boxes
-                        : hl.box
-                        ? [hl.box]
-                        : [];
+                      const boxes =
+                        hl.boxes && hl.boxes.length > 0
+                          ? hl.boxes
+                          : hl.box
+                          ? [hl.box]
+                          : [];
 
-                    return (
-                      <React.Fragment key={hl.id}>
-                        {boxes.map((box, bIdx) => (
-                          <div
-                            key={`${hl.id}_b${bIdx}`}
-                            style={{
-                              left: `${box.x}px`,
-                              top: `${box.y}px`,
-                              width: `${Math.max(box.w, 14)}px`,
-                              height: `${Math.max(box.h, 12)}px`,
-                            }}
-                            className={`absolute pointer-events-auto cursor-pointer rounded transition-colors duration-100 group ${
-                              isSelected
-                                ? 'border-2 border-red-600 bg-red-500/35 ring-4 ring-red-400/60 z-30 shadow-[0_0_16px_rgba(239,68,68,0.7)]'
-                                : hl.isColorDiff
-                                ? 'border-2 border-amber-500 bg-amber-500/25 hover:bg-amber-500/40 hover:border-amber-600 z-15 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                                : 'border-2 border-rose-500 bg-rose-500/20 hover:bg-rose-500/35 hover:border-rose-600 z-10 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
-                            }`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedError(isSelected ? null : hl.discrepancy);
-                            }}
-                            title={`#${hl.index} ${hl.category}: ${hl.details}`}
-                          >
-                            {/* Static Number Badge on the FIRST line box (Steady, no bounce/pulse) */}
-                            {bIdx === 0 && (
-                              <span
-                                className={`absolute -top-3 -left-2.5 flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full text-white text-[10px] font-black shadow-md border border-white ${
-                                  hl.isColorDiff ? 'bg-amber-600' : 'bg-red-600'
-                                }`}
-                              >
-                                {hl.index}
-                              </span>
-                            )}
+                      const isMatch = !!hl.isMatch;
 
-                            {/* Hover Tooltip Card */}
-                            <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs p-2.5 rounded-xl bg-slate-900/95 text-white text-[11px] shadow-2xl z-50 pointer-events-none backdrop-blur-xs border border-slate-700 animate-fadeIn">
-                              <div className="flex items-center gap-1.5 font-bold text-rose-300">
-                                <span className="rounded bg-rose-500/30 px-1.5 py-0.5 text-[9px] uppercase border border-rose-400/30 font-extrabold">
-                                  #{hl.index} {hl.category}
+                      return (
+                        <React.Fragment key={hl.id}>
+                          {boxes.map((box, bIdx) => (
+                            <div
+                              key={`${hl.id}_b${bIdx}`}
+                              style={{
+                                left: `${box.x}px`,
+                                top: `${box.y}px`,
+                                width: `${Math.max(box.w, 14)}px`,
+                                height: `${Math.max(box.h, 12)}px`,
+                              }}
+                              className={`absolute pointer-events-auto cursor-pointer rounded transition-colors duration-100 group ${
+                                isSelected
+                                  ? 'border-2 border-red-600 bg-red-500/35 ring-4 ring-red-400/60 z-30 shadow-[0_0_16px_rgba(239,68,68,0.7)]'
+                                  : isMatch
+                                  ? 'border-2 border-emerald-500 bg-emerald-500/20 hover:bg-emerald-500/35 hover:border-emerald-600 z-10 shadow-[0_0_8px_rgba(16,185,129,0.35)]'
+                                  : hl.isColorDiff
+                                  ? 'border-2 border-amber-500 bg-amber-500/25 hover:bg-amber-500/40 hover:border-amber-600 z-15 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
+                                  : 'border-2 border-rose-500 bg-rose-500/20 hover:bg-rose-500/35 hover:border-rose-600 z-10 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
+                              }`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedError(isSelected ? null : (hl.discrepancy || hl));
+                              }}
+                              title={
+                                isMatch
+                                  ? `✓ Approved Word Match: "${hl.target}"`
+                                  : `#${hl.index} ${hl.category}: ${hl.details}`
+                              }
+                            >
+                              {/* Static Badge on the FIRST line box */}
+                              {bIdx === 0 && (
+                                <span
+                                  className={`absolute -top-3 -left-2.5 flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full text-white text-[10px] font-black shadow-md border border-white ${
+                                    isMatch
+                                      ? 'bg-emerald-600'
+                                      : hl.isColorDiff
+                                      ? 'bg-amber-600'
+                                      : 'bg-red-600'
+                                  }`}
+                                >
+                                  {isMatch ? '✓' : hl.index}
                                 </span>
-                                {hl.isColorDiff && (
-                                  <span className="rounded bg-amber-500/30 text-amber-200 px-1 py-0.5 text-[8px] uppercase border border-amber-400/30">
-                                    Visual Color
+                              )}
+
+                              {/* Hover Tooltip Card */}
+                              <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs p-2.5 rounded-xl bg-slate-900/95 text-white text-[11px] shadow-2xl z-50 pointer-events-none backdrop-blur-xs border border-slate-700 animate-fadeIn">
+                                <div className="flex items-center gap-1.5 font-bold text-rose-300">
+                                  <span
+                                    className={`rounded px-1.5 py-0.5 text-[9px] uppercase border font-extrabold ${
+                                      isMatch
+                                        ? 'bg-emerald-500/30 text-emerald-200 border-emerald-400/30'
+                                        : 'bg-rose-500/30 text-rose-300 border-rose-400/30'
+                                    }`}
+                                  >
+                                    {isMatch ? '✓ Approved ISI Match' : `#${hl.index} ${hl.category}`}
                                   </span>
-                                )}
-                              </div>
-                              <div className="text-slate-200 mt-1 leading-snug line-clamp-2">
-                                {hl.details}
-                              </div>
-                              <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1.5 pt-1 border-t border-slate-800">
-                                <span>
-                                  Expected: <strong className="text-emerald-300">{hl.expected}</strong>
-                                </span>
-                                <span className="ml-2 font-bold text-indigo-300">Click to inspect</span>
+                                  {hl.isColorDiff && (
+                                    <span className="rounded bg-amber-500/30 text-amber-200 px-1 py-0.5 text-[8px] uppercase border border-amber-400/30">
+                                      Visual Color
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-slate-200 mt-1 leading-snug line-clamp-2">
+                                  {isMatch
+                                    ? `Approved text matches Word master: "${hl.target}"`
+                                    : hl.details}
+                                </div>
+                                <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1.5 pt-1 border-t border-slate-800">
+                                  <span>
+                                    {isMatch ? (
+                                      <>Status: <strong className="text-emerald-300">Verified Master</strong></>
+                                    ) : (
+                                      <>Expected: <strong className="text-emerald-300">{hl.expected}</strong></>
+                                    )}
+                                  </span>
+                                  <span className="ml-2 font-bold text-indigo-300">Click to inspect</span>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                        ))}
-                      </React.Fragment>
-                    );
-                  })}
+                          ))}
+                        </React.Fragment>
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -940,17 +1078,25 @@ export default function PdfVisualViewer({
       {/* COMPOSITE AUDIT FOOTER: Interactive Discrepancy Spotlight Bar */}
       {isAuditTarget && (
         <div className="border-t border-slate-200 bg-slate-50 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-800 flex-wrap">
               <Sparkles className="h-3.5 w-3.5 text-rose-600" />
-              <span>
-                Composite Discrepancy Inspector ({discrepancies.length} proofreading issues
-                {pageHighlights.filter((h) => h.isColorDiff).length > 0 &&
-                  `, ${pageHighlights.filter((h) => h.isColorDiff).length} color diffs`}
-                )
+              <span>Composite Discrepancy Inspector</span>
+              <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 text-rose-900 border border-rose-300 px-1.5 py-0.5 text-[10px] font-bold">
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
+                {discrepancies.length} Red Errors
               </span>
+              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-300 px-1.5 py-0.5 text-[10px] font-bold">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+                {pageHighlights.filter((h) => h.isMatch).length || matchingTokens.length} Green Matches
+              </span>
+              {pageHighlights.filter((h) => h.isColorDiff).length > 0 && (
+                <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 text-[10px] font-bold">
+                  {pageHighlights.filter((h) => h.isColorDiff).length} Color Shifts
+                </span>
+              )}
             </div>
-            {discrepancies.length === 0 && pageHighlights.length === 0 ? (
+            {discrepancies.length === 0 && pageHighlights.filter((h) => !h.isMatch).length === 0 ? (
               <span className="text-[11px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded">
                 ✓ 100% Match with Staging
               </span>
@@ -960,6 +1106,7 @@ export default function PdfVisualViewer({
               </span>
             )}
           </div>
+
 
           {/* Quick Discrepancy Pills */}
           {(discrepancies.length > 0 || pageHighlights.length > 0) && (

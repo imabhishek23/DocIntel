@@ -32,6 +32,7 @@ import {
 import { getExportUrl } from '../api';
 import { diffWordsWithSpace } from 'diff';
 import PdfVisualViewer from './PdfVisualViewer';
+import DocxVisualViewer from './DocxVisualViewer';
 
 const EMPTY_DISCREPANCIES = [];
 
@@ -77,7 +78,25 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     fileA,
     fileB,
     file,
+    docxHtmlA,
+    docxHtmlB,
+    matchingTokens = [],
+    isiAudit,
   } = result;
+
+  const isDocxA = !!(
+    docxHtmlA ||
+    (fileA && (fileA.name?.toLowerCase().endsWith('.docx') || fileA.name?.toLowerCase().endsWith('.doc'))) ||
+    docAName?.toLowerCase().endsWith('.docx') ||
+    docAName?.toLowerCase().endsWith('.doc')
+  );
+
+  const isDocxB = !!(
+    docxHtmlB ||
+    (fileB && (fileB.name?.toLowerCase().endsWith('.docx') || fileB.name?.toLowerCase().endsWith('.doc'))) ||
+    docBName?.toLowerCase().endsWith('.docx') ||
+    docBName?.toLowerCase().endsWith('.doc')
+  );
 
   const [renderedImageA, setRenderedImageA] = useState(null);
   const [renderedImageB, setRenderedImageB] = useState(null);
@@ -1305,7 +1324,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                     ref={splitContainerRef}
                     className="relative flex flex-col lg:flex-row w-full gap-3 lg:gap-0 select-none overflow-hidden rounded-2xl"
                   >
-                    {/* SLIDE A: Staging Master (Error-Free Reference Standard) */}
+                    {/* SLIDE A: Staging Master / Approved Word Reference Standard */}
                     <div
                       className="w-full min-w-0"
                       style={{
@@ -1314,28 +1333,41 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                         maxWidth: isDesktop ? `${splitRatio}%` : '100%',
                       }}
                     >
-                      <PdfVisualViewer
-                        file={fileA}
-                        pdfUrl={pdfUrlA || pdfA}
-                        imageSrc={initialImageA}
-                        title={docAName || 'Document A (Staging Reference Standard)'}
-                        badge="Slide A"
-                        subtitle="✓ Staging Master (Error-Free Reference)"
-                        isAuditTarget={false}
-                        scale={pdfZoom}
-                        pageNumber={pdfPage}
-                        onPageChange={setPdfPage}
-                        onTotalPagesChange={setPdfTotalPages}
-                        scrollRef={leftSlideRef}
-                        onScroll={handleLeftScroll}
-                        discrepancies={EMPTY_DISCREPANCIES}
-                        canvasRefCallback={(node) => {
-                          stagingCanvasRef.current = node;
-                        }}
-                        onRenderSuccess={({ dataUrl }) => {
-                          if (!renderedImageA) setRenderedImageA(dataUrl);
-                        }}
-                      />
+                      {isDocxA ? (
+                        <DocxVisualViewer
+                          file={fileA}
+                          docxHtml={docxHtmlA}
+                          text={textA}
+                          title={docAName || 'Document A (Approved Master Word Reference)'}
+                          badge="Slide A (Word)"
+                          subtitle="✓ Approved Word Master (.docx)"
+                          scrollRef={leftSlideRef}
+                          onScroll={handleLeftScroll}
+                        />
+                      ) : (
+                        <PdfVisualViewer
+                          file={fileA}
+                          pdfUrl={pdfUrlA || pdfA}
+                          imageSrc={initialImageA}
+                          title={docAName || 'Document A (Staging Reference Standard)'}
+                          badge="Slide A"
+                          subtitle="✓ Staging Master (Error-Free Reference)"
+                          isAuditTarget={false}
+                          scale={pdfZoom}
+                          pageNumber={pdfPage}
+                          onPageChange={setPdfPage}
+                          onTotalPagesChange={setPdfTotalPages}
+                          scrollRef={leftSlideRef}
+                          onScroll={handleLeftScroll}
+                          discrepancies={EMPTY_DISCREPANCIES}
+                          canvasRefCallback={(node) => {
+                            stagingCanvasRef.current = node;
+                          }}
+                          onRenderSuccess={({ dataUrl }) => {
+                            if (!renderedImageA) setRenderedImageA(dataUrl);
+                          }}
+                        />
+                      )}
                     </div>
 
                     {/* DRAGGABLE DIVIDER HANDLE (Adjust Left vs Right Slide Width) */}
@@ -1353,7 +1385,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                       </div>
                     </div>
 
-                    {/* SLIDE B: Composite Audit Target (With Discrepancies) */}
+                    {/* SLIDE B: Composite Audit Target (With Discrepancies & Matching Approved Tokens) */}
                     <div
                       className="w-full min-w-0"
                       style={{
@@ -1377,6 +1409,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                         scrollRef={rightSlideRef}
                         onScroll={handleRightScroll}
                         discrepancies={proofreadingErrors}
+                        matchingTokens={matchingTokens}
                         baselineCanvasRef={stagingCanvasRef}
                         onOpenComment={(err) => {
                           setActiveCommentTarget({
@@ -1820,6 +1853,19 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
               <CheckCircle2 className="h-4 w-4" />
               Proofreading Errors ({errorSummary.total})
             </button>
+            {isiAudit && (isiAudit.totalOccurrences > 0 || isiAudit.isIsiAudit) && (
+              <button
+                onClick={() => setActiveTab('isiAudit')}
+                className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+                  activeTab === 'isiAudit'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <Sparkles className="h-4 w-4" />
+                🛡 ISI Safety Audit ({isiAudit.totalOccurrences || 0} Instances)
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('changes')}
               className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
@@ -2007,6 +2053,203 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                 ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB: ISI Multi-Occurrence Safety Audit */}
+      {activeTab === 'isiAudit' && isiAudit && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-950 via-slate-900 to-indigo-950 p-6 text-white shadow-md">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-md bg-purple-500/30 text-purple-200 border border-purple-400/40 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide">
+                    Pharma Regulatory Safety Audit
+                  </span>
+                  <span className="rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2 py-0.5 text-xs font-bold">
+                    {isiAudit.totalOccurrences} ISI Instances Partitioned
+                  </span>
+                </div>
+                <h3 className="text-xl font-bold text-white mt-2">
+                  Important Safety Information (ISI) Multi-Occurrence Audit
+                </h3>
+                <p className="text-xs text-purple-200/80 mt-1 max-w-2xl leading-relaxed">
+                  Promotional pharmaceutical PDFs typically place the ISI in multiple positions (Header/Banner Indication & Selected ISI, Body Patient Profile snapshot, and Footer Full Prescribing Information). Each instance is audited against the master approved Word document to verify compliance.
+                </p>
+              </div>
+
+              {/* Overall Match Circle / Score */}
+              <div className="flex items-center gap-4 bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/10 shrink-0">
+                <div className="text-center">
+                  <span className="text-4xl font-black tracking-tight text-emerald-300">
+                    {isiAudit.overallMatchRate}%
+                  </span>
+                  <span className="block text-[10px] uppercase tracking-wider font-bold text-slate-300 mt-0.5">
+                    Safety Compliance
+                  </span>
+                </div>
+                <div className="border-l border-white/20 pl-4 space-y-1 text-xs">
+                  <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Approved Word Master</span>
+                  </div>
+                  <div className="text-[11px] text-slate-300">
+                    {proofreadingErrors.length === 0 ? '✓ Zero Safety Deviations' : `⚠ ${proofreadingErrors.length} Deviations Found`}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Stats Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-xs">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total ISI Instances in PDF</span>
+              <p className="text-2xl font-extrabold text-slate-900 mt-1">{isiAudit.totalOccurrences}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">Partitioned promotional sections</p>
+            </div>
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 shadow-xs">
+              <span className="text-xs font-bold text-emerald-700 uppercase tracking-wider">Approved Word Matches</span>
+              <p className="text-2xl font-extrabold text-emerald-700 mt-1">
+                {matchingTokens.length > 0 ? matchingTokens.length : isiAudit.occurrences.reduce((s, o) => s + (o.matchedWordsCount || 0), 0)}
+              </p>
+              <p className="text-[11px] text-emerald-600 mt-0.5">Highlighted in green on PDF Slide B</p>
+            </div>
+            <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-4 shadow-xs">
+              <span className="text-xs font-bold text-rose-700 uppercase tracking-wider">Proofreading Deviations</span>
+              <p className="text-2xl font-extrabold text-rose-700 mt-1">{proofreadingErrors.length}</p>
+              <p className="text-[11px] text-rose-600 mt-0.5">Highlighted in red on PDF Slide B</p>
+            </div>
+          </div>
+
+          {/* Individual Occurrences List */}
+          <div className="space-y-4">
+            <h4 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-purple-600" />
+              Detailed Breakdown by ISI Occurrence
+            </h4>
+
+            {isiAudit.occurrences.map((occ, idx) => {
+              const isCompliant = occ.status === 'compliant' || occ.discrepancyCount === 0;
+
+              return (
+                <div
+                  key={occ.id || idx}
+                  className="rounded-2xl border-2 border-slate-200 bg-white p-6 shadow-sm space-y-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="rounded-lg bg-purple-100 text-purple-900 font-mono text-xs font-extrabold px-2.5 py-1">
+                        Instance #{occ.occurrenceIndex}
+                      </span>
+                      <div>
+                        <h5 className="text-sm font-bold text-slate-900">
+                          {occ.heading || `ISI Section ${idx + 1}`}
+                        </h5>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Detected in promotional PDF text stream
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-bold border ${
+                          isCompliant
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : 'bg-rose-50 text-rose-800 border-rose-300'
+                        }`}
+                      >
+                        {isCompliant ? '✓ 100% Approved Compliance' : `⚠ ${occ.discrepancyCount} Deviations`}
+                      </span>
+                      <button
+                        onClick={() => {
+                          setDiffView('slides');
+                          window.scrollTo({ top: 300, behavior: 'smooth' });
+                        }}
+                        className="flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition cursor-pointer"
+                        title="View on PDF Slide B"
+                      >
+                        <span>Inspect on Slide B</span>
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Progress Bar & Stats */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
+                      <span>Approved Master Match Rate</span>
+                      <span className="font-bold text-slate-900">{occ.matchPercentage}%</span>
+                    </div>
+                    <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-500 ${
+                          occ.matchPercentage >= 95 ? 'bg-emerald-500' : 'bg-amber-500'
+                        }`}
+                        style={{ width: `${occ.matchPercentage}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Text snippet preview */}
+                  <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700 font-sans border border-slate-200">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Occurrence Snippet Preview:
+                    </span>
+                    <p className="italic text-slate-600 line-clamp-3">"{occ.snippet}"</p>
+                  </div>
+
+                  {/* Deviations if any */}
+                  {occ.discrepancies && occ.discrepancies.length > 0 && (
+                    <div className="space-y-2 pt-2 border-t border-slate-100">
+                      <span className="text-xs font-bold text-rose-700 flex items-center gap-1.5">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        Proofreading Deviations in this Occurrence ({occ.discrepancies.length}):
+                      </span>
+                      <div className="grid gap-2">
+                        {occ.discrepancies.map((d, dIdx) => (
+                          <div
+                            key={d.id || dIdx}
+                            className="rounded-xl border border-rose-200 bg-rose-50/60 p-3 text-xs flex flex-wrap items-center justify-between gap-2"
+                          >
+                            <div className="space-y-1">
+                              <span className="rounded bg-rose-200 text-rose-950 font-bold px-1.5 py-0.5 text-[10px] uppercase">
+                                {d.category}
+                              </span>
+                              <p className="text-slate-800 font-medium mt-0.5">{d.details}</p>
+                              <div className="flex items-center gap-3 text-[11px]">
+                                <span className="text-emerald-800 font-semibold">
+                                  Expected: <strong>{d.expected}</strong>
+                                </span>
+                                <span className="text-rose-800 font-bold">
+                                  Found: <strong>{d.found}</strong>
+                                </span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => {
+                                setActiveCommentTarget({
+                                  target: 'slideB',
+                                  snippet: `${d.expected} ➔ ${d.found}`,
+                                  errorId: d.id,
+                                });
+                                setNewCommentModalOpen(true);
+                              }}
+                              className="rounded-md bg-white border border-rose-300 text-rose-800 px-2 py-1 text-xs font-bold hover:bg-rose-100 transition shadow-2xs cursor-pointer"
+                            >
+                              Add Note
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

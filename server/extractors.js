@@ -291,3 +291,18 @@ export async function extractImageText(buffer) {
     return '';
   }
 }
+
+/**
+ * Converts a .docx buffer to clean HTML suitable for rendering in the Word document viewer.
+ */
+export async function extractDocxHtml(buffer) {
+  try {
+    if (!buffer || buffer.length === 0) return '';
+    const result = await mammoth.convertToHtml({ buffer });
+    return result.value || '';
+  } catch (err) {
+    console.warn('[DOCX HTML] Extraction warning:', err.message);
+    return '';
+  }
+}
+

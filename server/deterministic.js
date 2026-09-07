@@ -760,6 +760,32 @@ export function computeVisualWordDiff(textA, textB) {
 
   const proofreadingErrors = detectProofreadingErrors(textA, textB);
 
+  // Collect matching approved word tokens for visual green highlighting on PDF
+  const matchingTokens = [];
+  let tokenIdx = 1;
+  for (const part of proofreadingParts) {
+    if (part.status === 'verified_match' && part.value) {
+      const val = part.value.trim();
+      if (val.length >= 2) {
+        const words = val.split(/\s+/).filter(Boolean);
+        for (let i = 0; i < words.length; i += 4) {
+          const chunk = words.slice(i, i + 4).join(' ');
+          if (chunk.length >= 2) {
+            matchingTokens.push({
+              id: `match_${tokenIdx++}`,
+              text: chunk,
+              isApprovedMatch: true,
+              type: 'approved_match',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // Multi-occurrence ISI Safety Audit (detects repeated ISI in PDF against Approved Word Doc)
+  const isiAudit = auditIsiOccurrences(textA, textB);
+
   const errorSummary = {
     capitalization: proofreadingErrors.filter((e) => e.category === 'Capitalization').length,
     spacing: proofreadingErrors.filter((e) => e.category === 'Spacing').length,
@@ -784,7 +810,147 @@ export function computeVisualWordDiff(textA, textB) {
       rightParts,
     },
     proofreadingErrors,
+    matchingTokens,
+    isiAudit,
     errorSummary,
+  };
+}
+
+/**
+ * Detects and segments Important Safety Information (ISI), Indication, and Prescribing Information blocks.
+ * In promotional medical materials, ISI often appears in 2-3 distinct locations:
+ * - Summary / Prominent ISI banner near the top / header
+ * - Patient profile / safety snapshot in the body
+ * - Comprehensive Full ISI and Prescribing Information statement in the footer / trailing pages
+ */
+export function detectIsiBlocks(text) {
+  if (!text) return [];
+  const lines = text.split('\n');
+  const blocks = [];
+  let currentBlock = null;
+
+  const ISI_HEADING_REGEX =
+    /^(?:[•\-*\s]*)(?:<b>\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(&|and)\s*Important\s+Safety\s+Information|Contraindications|Warnings\s*(&|and)\s*Precautions|Adverse\s+Reactions|Patient\s+Snapshot|Safety\s+Considerations|Boxed\s+Warning)(?:\s*<\/b>)?/i;
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const cleanLine = rawLine.replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
+    if (!cleanLine) continue;
+
+    const match = cleanLine.match(ISI_HEADING_REGEX);
+    if (match) {
+      if (currentBlock && currentBlock.lines.length > 0) {
+        currentBlock.text = currentBlock.lines.join('\n').trim();
+        blocks.push(currentBlock);
+      }
+      currentBlock = {
+        id: `isi_${blocks.length + 1}`,
+        occurrenceIndex: blocks.length + 1,
+        heading: cleanLine,
+        startLine: i + 1,
+        lines: [cleanLine],
+      };
+    } else if (currentBlock) {
+      if (/^(?:[•\-*\s]*)(?:<b>\s*)?(?:Patient\s+Profile|Clinical\s+Efficacy|Study\s+Design|Dosing\s+Summary|References)(?:\s*<\/b>)?/i.test(cleanLine)) {
+        currentBlock.text = currentBlock.lines.join('\n').trim();
+        blocks.push(currentBlock);
+        currentBlock = null;
+      } else {
+        currentBlock.lines.push(cleanLine);
+      }
+    }
+  }
+
+  if (currentBlock && currentBlock.lines.length > 0) {
+    currentBlock.text = currentBlock.lines.join('\n').trim();
+    blocks.push(currentBlock);
+  }
+
+  return blocks;
+}
+
+/**
+ * Audits each detected ISI occurrence in the PDF against the Approved Word Master Document.
+ * Calculates match percentage, lists verified approved phrases (Green), and identifies discrepancies (Red).
+ */
+export function auditIsiOccurrences(textA, textB) {
+  const blocksB = detectIsiBlocks(textB);
+
+  // If no structured headings were partitioned, check if safety keywords exist
+  if (blocksB.length === 0) {
+    if (/safety|indication|contraindication|adverse|prescribing/i.test(textB)) {
+      blocksB.push({
+        id: 'isi_1',
+        occurrenceIndex: 1,
+        heading: 'Important Safety Information & Indication',
+        startLine: 1,
+        text: textB,
+      });
+    }
+  }
+
+  const occurrences = [];
+
+  for (let i = 0; i < blocksB.length; i++) {
+    const block = blocksB[i];
+    const blockText = block.text;
+
+    const blockDiff = diffWordsWithSpace(
+      textA.replace(/<\/?[bi]\b[^>]*>/gi, ''),
+      blockText.replace(/<\/?[bi]\b[^>]*>/gi, '')
+    );
+
+    let matchedWords = 0;
+    let totalWords = 0;
+    const matchedPhrases = [];
+    const blockErrors = detectProofreadingErrors(textA, blockText);
+
+    for (const part of blockDiff) {
+      const words = (part.value || '').trim().split(/\s+/).filter(Boolean);
+      if (!part.added && !part.removed) {
+        matchedWords += words.length;
+        totalWords += words.length;
+        if (words.length >= 2) {
+          matchedPhrases.push(words.join(' '));
+        }
+      } else if (part.added) {
+        totalWords += words.length;
+      }
+    }
+
+    const matchRate = totalWords > 0 ? Math.min(100, Math.round((matchedWords / totalWords) * 100)) : 100;
+    const isCompliant = blockErrors.length === 0 && matchRate >= 95;
+
+    occurrences.push({
+      id: block.id || `isi_${i + 1}`,
+      occurrenceIndex: i + 1,
+      heading: block.heading,
+      snippet: blockText.slice(0, 180) + (blockText.length > 180 ? '...' : ''),
+      matchPercentage: matchRate,
+      matchedWordsCount: matchedWords,
+      totalWordsCount: totalWords,
+      matchedPhrasesCount: matchedPhrases.length,
+      discrepancyCount: blockErrors.length,
+      discrepancies: blockErrors,
+      status: isCompliant
+        ? 'compliant'
+        : blockErrors.some((e) => e.severity === 'critical')
+        ? 'critical_deviations'
+        : 'minor_deviations',
+    });
+  }
+
+  const totalOccurrences = occurrences.length;
+  const overallMatchRate =
+    totalOccurrences > 0
+      ? Math.round(occurrences.reduce((sum, o) => sum + o.matchPercentage, 0) / totalOccurrences)
+      : 100;
+
+  return {
+    isIsiAudit: totalOccurrences > 0,
+    totalOccurrences,
+    overallMatchRate,
+    occurrences,
   };
 }
 

@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { initStorage, saveReview, listReviews, getReviewById, clearReviews, getStorageStatus } from './storage.js';
-import { extractDocumentText } from './extractors.js';
+import { extractDocumentText, extractDocxHtml } from './extractors.js';
 import { extractDeterministicFields, diffDeterministic, computeVisualWordDiff } from './deterministic.js';
 import { analyzeDocument, compareDocuments, answerReviewQuestion } from './aiEngine.js';
 
@@ -167,6 +167,9 @@ app.post(
       const fileA = fileList.find((f) => f.fieldname === 'documentA' || f.fieldname === 'fileA' || f.fieldname === 'file') || fileList[0];
       const fileB = fileList.find((f) => f.fieldname === 'documentB' || f.fieldname === 'fileB') || (fileList.length > 1 && fileList[1] !== fileA ? fileList[1] : null);
 
+      let docxHtmlA = null;
+      let docxHtmlB = null;
+
       if (fileA) {
         nameA = fileA.originalname;
         if (fileA.mimetype?.startsWith('image/') || /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i.test(nameA)) {
@@ -174,6 +177,9 @@ app.post(
         }
         if (fileA.mimetype === 'application/pdf' || /\.pdf$/i.test(nameA)) {
           pdfA = `data:application/pdf;base64,${fileA.buffer.toString('base64')}`;
+        }
+        if (/\.docx$/i.test(nameA)) {
+          docxHtmlA = await extractDocxHtml(fileA.buffer);
         }
         textA = await extractDocumentText(nameA, fileA.buffer);
       } else if (req.body.textA) {
@@ -188,6 +194,9 @@ app.post(
         }
         if (fileB.mimetype === 'application/pdf' || /\.pdf$/i.test(nameB)) {
           pdfB = `data:application/pdf;base64,${fileB.buffer.toString('base64')}`;
+        }
+        if (/\.docx$/i.test(nameB)) {
+          docxHtmlB = await extractDocxHtml(fileB.buffer);
         }
         textB = await extractDocumentText(nameB, fileB.buffer);
       } else if (req.body.textB) {
@@ -236,6 +245,8 @@ app.post(
           rightParts: visualDiff.rightParts,
           sideBySide: visualDiff.sideBySide,
           proofreadingErrors: visualDiff.proofreadingErrors,
+          matchingTokens: visualDiff.matchingTokens || [],
+          isiAudit: visualDiff.isiAudit || null,
           errorSummary: visualDiff.errorSummary,
           textA,
           textB,
@@ -243,6 +254,8 @@ app.post(
           imageB,
           pdfA,
           pdfB,
+          docxHtmlA,
+          docxHtmlB,
         },
         modelUsed: result.modelUsed,
       });
@@ -261,6 +274,8 @@ app.post(
         rightParts: visualDiff.rightParts,
         sideBySide: visualDiff.sideBySide,
         proofreadingErrors: visualDiff.proofreadingErrors,
+        matchingTokens: visualDiff.matchingTokens || [],
+        isiAudit: visualDiff.isiAudit || null,
         errorSummary: visualDiff.errorSummary,
         textA,
         textB,
@@ -268,6 +283,8 @@ app.post(
         imageB,
         pdfA,
         pdfB,
+        docxHtmlA,
+        docxHtmlB,
         hasPdf: !!(pdfA || pdfB),
         hasImages: !!(imageA || imageB),
         deterministicDiffs,
