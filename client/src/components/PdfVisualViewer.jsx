@@ -135,10 +135,10 @@ function computePageHighlights(
         text,
         clean: text.toLowerCase().replace(/[^a-z0-9]/g, ''),
         box: {
-          x: Math.round(minX - 3),
-          y: Math.round(minY - 2),
-          w: Math.round(maxX - minX + 6),
-          h: Math.round(maxY - minY + 4),
+          x: Math.round(minX - 1),
+          y: Math.round(minY),
+          w: Math.round(maxX - minX + 2),
+          h: Math.round(maxY - minY),
         },
       };
     });
@@ -449,14 +449,15 @@ function computePageHighlights(
       const normTarget = targetStr.replace(/\s+/g, ' ').toLowerCase();
 
       for (let i = 0; i < itemBoxes.length; i++) {
-        // Skip non-ISI promotional elements ONLY in Word-to-PDF ISI comparison
-        if (isWordToPdf && NON_ISI_TEXT_REGEX.test(itemBoxes[i].cleanStr)) continue;
+        // Skip non-ISI promotional elements in all ISI comparison modes
+        const shouldSkipNonIsi = isWordToPdf || isIsiComparison;
+        if (shouldSkipNonIsi && NON_ISI_TEXT_REGEX.test(itemBoxes[i].cleanStr)) continue;
 
         let combined = '';
         const span = [];
         for (let j = i; j < Math.min(itemBoxes.length, i + 6); j++) {
           const it = itemBoxes[j];
-          if (isWordToPdf && NON_ISI_TEXT_REGEX.test(it.cleanStr)) break;
+          if (shouldSkipNonIsi && NON_ISI_TEXT_REGEX.test(it.cleanStr)) break;
           span.push(it);
           combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
 
@@ -688,6 +689,14 @@ export default function PdfVisualViewer({
     }
   }, [selectedDiscrepancyId, discrepancies]);
 
+  // Master safety watchdog: ensure loading spinner is ALWAYS dismissed within 3s
+  useEffect(() => {
+    const masterTimer = setTimeout(() => {
+      setLoading(false);
+    }, 3000);
+    return () => clearTimeout(masterTimer);
+  }, [file, pdfUrl, imageSrc]);
+
   // Load PDF Document
   useEffect(() => {
     let isCancelled = false;
@@ -722,7 +731,7 @@ export default function PdfVisualViewer({
             if (src.startsWith('data:') || src.includes(';base64,')) {
               return toUint8Array(src);
             }
-            if (src.startsWith('blob:')) {
+            if (src.startsWith('blob:') || src.startsWith('http://') || src.startsWith('https://')) {
               try {
                 const resp = await fetch(src);
                 if (resp.ok) {
@@ -742,25 +751,32 @@ export default function PdfVisualViewer({
           uint8 = await extractUint8(fallbackSource);
         }
 
-        const cMapConfig = {
-          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '3.11.174'}/cmaps/`,
-          cMapPacked: true,
-        };
-
         let loadingTask;
         if (uint8) {
-          loadingTask = pdfjsLib.getDocument({ data: uint8, ...cMapConfig });
+          loadingTask = pdfjsLib.getDocument({ data: uint8 });
         } else if (typeof primarySource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: primarySource, ...cMapConfig });
+          loadingTask = pdfjsLib.getDocument({ url: primarySource });
         } else if (typeof fallbackSource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: fallbackSource, ...cMapConfig });
+          loadingTask = pdfjsLib.getDocument({ url: fallbackSource });
         } else {
+          if (imageSrc) {
+            setPdfDoc(null);
+            setLoading(false);
+            return;
+          }
           setError('No readable document source available.');
           setLoading(false);
           return;
         }
 
-        const doc = await loadingTask.promise;
+        // 4s timeout race so PDF loading never hangs indefinitely
+        const doc = await Promise.race([
+          loadingTask.promise,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('PDF load timed out')), 4000)
+          ),
+        ]);
+
         if (isCancelled) return;
 
         setPdfDoc(doc);
@@ -770,9 +786,20 @@ export default function PdfVisualViewer({
         }
       } catch (err) {
         if (!isCancelled) {
-          console.error('[PdfVisualViewer] PDF Load error:', err);
-          setError(err.message || 'Failed to load document preview.');
+          console.warn('[PdfVisualViewer] PDF Load error or timeout:', err);
+          if (imageSrc) {
+            // Graceful fallback to image preview if PDF fails or times out
+            setPdfDoc(null);
+          } else {
+            setError(err.message || 'Failed to load document preview.');
+          }
           setLoading(false);
+        }
+      } finally {
+        if (!isCancelled) {
+          if (!pdfDoc && !hasPdfSource) {
+            setLoading(false);
+          }
         }
       }
     }
@@ -790,7 +817,12 @@ export default function PdfVisualViewer({
   useEffect(() => {
     let isCancelled = false;
 
-    if (isImageMode || !pdfDoc || !canvasRef.current) return;
+    if (isImageMode || !pdfDoc || !canvasRef.current) {
+      if (isImageMode || imageSrc) {
+        setLoading(false);
+      }
+      return;
+    }
 
     // Safety watchdog: ensure loading overlay clears after 2.5s maximum to prevent stuck spinner
     const watchdogTimer = setTimeout(() => {
@@ -1098,12 +1130,14 @@ export default function PdfVisualViewer({
 
         {/* Content Container: Canvas with In-Place Bounding Box Overlay */}
         <div className="flex justify-center items-start min-h-full py-2">
-          {isImageMode ? (
+          {isImageMode || (!pdfDoc && imageSrc) ? (
             <img
               src={imageSrc || (file ? URL.createObjectURL(file) : '')}
               alt={title}
               className="max-w-full h-auto rounded-lg shadow-md border border-slate-300 bg-white"
               style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}
+              onLoad={() => setLoading(false)}
+              onError={() => setLoading(false)}
             />
           ) : (
             <div className="relative inline-block mx-auto">
@@ -1151,19 +1185,20 @@ export default function PdfVisualViewer({
                                 top: `${box.y}px`,
                                 width: `${Math.max(box.w, 14)}px`,
                                 height: `${Math.max(box.h, 12)}px`,
+                                mixBlendMode: 'multiply',
                               }}
-                              className={`absolute pointer-events-auto cursor-pointer rounded transition-all duration-150 group ${
+                              className={`absolute pointer-events-auto cursor-pointer rounded-xs transition-colors duration-150 group ${
                                 isMatch
                                   ? isSelected
-                                    ? 'border-2 border-emerald-600 bg-emerald-400/40 ring-4 ring-emerald-400/80 z-30 shadow-[0_0_18px_rgba(16,185,129,0.7)]'
-                                    : 'border-2 border-emerald-500 bg-emerald-400/25 hover:bg-emerald-400/45 hover:border-emerald-600 z-10 shadow-[0_0_10px_rgba(16,185,129,0.4)]'
+                                    ? 'border-b-2 border-emerald-600 bg-emerald-300/50 ring-1 ring-emerald-500 z-20'
+                                    : 'border-b border-emerald-500/70 bg-emerald-200/35 hover:bg-emerald-300/45 z-10'
                                   : isSelected
-                                  ? 'border-2 border-rose-600 bg-rose-500/40 ring-4 ring-rose-400/80 z-30 shadow-[0_0_18px_rgba(239,68,68,0.7)]'
+                                  ? 'border-b-2 border-rose-600 bg-rose-300/55 ring-1 ring-rose-500 z-20'
                                   : hl.isMissingWord
-                                  ? 'border-2 border-dashed border-rose-600 bg-rose-500/35 ring-2 ring-rose-400/50 z-25 shadow-[0_0_12px_rgba(239,68,68,0.6)]'
+                                  ? 'border-b-2 border-dashed border-rose-600 bg-rose-200/40 z-15'
                                   : hl.isColorDiff
-                                  ? 'border-2 border-amber-500 bg-amber-500/25 hover:bg-amber-500/40 hover:border-amber-600 z-15 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                                  : 'border-2 border-rose-500 bg-rose-500/25 hover:bg-rose-500/40 hover:border-rose-600 z-10 shadow-[0_0_10px_rgba(244,63,94,0.45)]'
+                                  ? 'border-b border-amber-500 bg-amber-200/35 hover:bg-amber-300/45 z-10'
+                                  : 'border-b-2 border-rose-500 bg-rose-200/35 hover:bg-rose-300/45 z-10'
                               }`}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1177,20 +1212,23 @@ export default function PdfVisualViewer({
                                   : `#${hl.index} ${hl.category}: ${hl.details}`
                               }
                             >
-                              {/* Static Badge on the FIRST line box */}
-                              {bIdx === 0 && (
+                              {/* Error / Discrepancy indicator badge:
+                                  - For matches: NEVER show badge over text so words and lines remain 100% visible!
+                                  - For errors: show subtle index tag in top-right corner on hover or selection!
+                              */}
+                              {!isMatch && (
                                 <span
-                                  className={`absolute -top-3.5 -left-2 flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full text-white text-[9px] font-black shadow-md border border-white whitespace-nowrap ${
-                                    isMatch
-                                      ? 'bg-emerald-600 ring-2 ring-emerald-300'
+                                  className={`absolute -top-3 right-0 flex items-center justify-center h-4 px-1.5 rounded-full text-white text-[9px] font-bold shadow-xs whitespace-nowrap pointer-events-none transition-opacity ${
+                                    isSelected
+                                      ? 'opacity-100 bg-rose-600 ring-1 ring-white'
                                       : hl.isMissingWord
-                                      ? 'bg-rose-700 ring-2 ring-rose-300'
+                                      ? 'opacity-100 bg-rose-700 ring-1 ring-white'
                                       : hl.isColorDiff
-                                      ? 'bg-amber-600 ring-2 ring-amber-300'
-                                      : 'bg-rose-600 ring-2 ring-rose-300'
+                                      ? 'opacity-90 bg-amber-600'
+                                      : 'opacity-0 group-hover:opacity-100 bg-rose-600'
                                   }`}
                                 >
-                                  {isMatch ? '✓' : hl.isMissingWord ? `^ Missing: "${hl.target}"` : hl.index}
+                                  {hl.isMissingWord ? `^ Missing` : `#${hl.index}`}
                                 </span>
                               )}
 
