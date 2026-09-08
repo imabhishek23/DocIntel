@@ -1444,7 +1444,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                         <PdfVisualViewer
                           file={fileA}
                           pdfUrl={pdfUrlA || pdfA}
-                          imageSrc={initialImageA || renderedImageA || imageA}
+                          imageSrc={initialImageA}
                           title={docAName || 'Document A (Staging Reference Standard)'}
                           badge="Slide A"
                           subtitle="✓ Staging Master (Error-Free Reference)"

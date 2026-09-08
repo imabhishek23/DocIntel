@@ -764,30 +764,41 @@ export default function PdfVisualViewer({
           return null;
         }
 
-        let uint8 = await extractUint8(primarySource);
-        if (!uint8 && fallbackSource) {
-          uint8 = await extractUint8(fallbackSource);
+        let doc = null;
+        let lastError = null;
+
+        // Collect all potential PDF sources: primarySource, fallbackSource, file, pdfUrl
+        const candidates = [primarySource, fallbackSource, file, pdfUrl].filter(Boolean);
+        const uniqueCandidates = [...new Set(candidates)];
+
+        for (const src of uniqueCandidates) {
+          try {
+            let loadingTask = null;
+            const uint8 = await extractUint8(src);
+            if (uint8 && uint8.length > 0) {
+              loadingTask = pdfjsLib.getDocument({ data: uint8.slice() });
+            } else if (typeof src === 'string' && src.trim()) {
+              loadingTask = pdfjsLib.getDocument({ url: src });
+            }
+
+            if (loadingTask) {
+              doc = await loadingTask.promise;
+              if (doc) break;
+            }
+          } catch (loadErr) {
+            console.warn('[PdfVisualViewer] Source candidate load failed, trying next candidate:', loadErr);
+            lastError = loadErr;
+          }
         }
 
-        let loadingTask;
-        if (uint8) {
-          loadingTask = pdfjsLib.getDocument({ data: uint8 });
-        } else if (typeof primarySource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: primarySource });
-        } else if (typeof fallbackSource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: fallbackSource });
-        } else {
+        if (!doc) {
           if (imageSrc) {
             setPdfDoc(null);
             setLoading(false);
             return;
           }
-          setError('No readable document source available.');
-          setLoading(false);
-          return;
+          throw lastError || new Error('No readable document source available.');
         }
-
-        const doc = await loadingTask.promise;
 
         if (isCancelled) return;
 
@@ -800,7 +811,6 @@ export default function PdfVisualViewer({
         if (!isCancelled) {
           console.warn('[PdfVisualViewer] PDF Load error or timeout:', err);
           if (imageSrc) {
-            // Graceful fallback to image preview if PDF fails or times out
             setPdfDoc(null);
           } else {
             setError(err.message || 'Failed to load document preview.');
@@ -809,9 +819,7 @@ export default function PdfVisualViewer({
         }
       } finally {
         if (!isCancelled) {
-          if (!pdfDoc && !hasPdfSource) {
-            setLoading(false);
-          }
+          setLoading(false);
         }
       }
     }
@@ -830,9 +838,7 @@ export default function PdfVisualViewer({
     let isCancelled = false;
 
     if (isImageMode || !pdfDoc || !canvasRef.current) {
-      if (isImageMode || imageSrc) {
-        setLoading(false);
-      }
+      setLoading(false);
       return;
     }
 
@@ -958,6 +964,10 @@ export default function PdfVisualViewer({
         if (!isCancelled) {
           console.error('[PdfVisualViewer] Render error:', err);
           setError(err.message || 'Failed to render PDF page.');
+          setLoading(false);
+        }
+      } finally {
+        if (!isCancelled) {
           setLoading(false);
         }
       }
@@ -1120,7 +1130,7 @@ export default function PdfVisualViewer({
         onScroll={onScroll}
         className="relative flex-1 h-[620px] overflow-auto bg-slate-100/80 p-4 select-text"
       >
-        {loading && (
+        {loading && !pdfDoc && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/85 backdrop-blur-xs z-20">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 mb-2">
               <FileText className="h-6 w-6" />
