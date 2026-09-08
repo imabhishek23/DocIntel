@@ -139,14 +139,18 @@ export default function CompareView({ onOpenQA }) {
         ...data,
         fileA,
         fileB,
-        pdfUrlA: pdfUrlA || data.pdfA,
-        pdfUrlB: pdfUrlB || data.pdfB,
+        pdfA: data.pdfA || null,
+        pdfB: data.pdfB || null,
+        pdfUrlA: fileA ? (pdfUrlA || data.pdfA) : (data.pdfA || null),
+        pdfUrlB: fileB ? (pdfUrlB || data.pdfB) : (data.pdfB || null),
         imageA: imgUrlA || data.imageA,
         imageB: imgUrlB || data.imageB,
         docxHtmlA: data.docxHtmlA || null,
         docxHtmlB: data.docxHtmlB || null,
         matchingTokens: data.matchingTokens || [],
         isiAudit: data.isiAudit || null,
+        isiLineResults: data.isiLineResults || [],
+        isIsiComparison: data.isIsiComparison || false,
       });
     } catch (err) {
       setError(err.message || 'Comparison failed.');

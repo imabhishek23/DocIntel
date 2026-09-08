@@ -36,7 +36,15 @@ import DocxVisualViewer from './DocxVisualViewer';
 
 const EMPTY_DISCREPANCIES = [];
 
-export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOpenQA }) {
+export default function ResultsDisplay({ result: rawResult, mode = 'analyze', onReset, onOpenQA }) {
+  const result = useMemo(() => {
+    if (!rawResult) return {};
+    if (rawResult.result && typeof rawResult.result === 'object') {
+      return { ...rawResult.result, ...rawResult, ...rawResult.result };
+    }
+    return rawResult;
+  }, [rawResult]);
+
   const {
     reviewId,
     title,
@@ -1436,20 +1444,21 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                         <PdfVisualViewer
                           file={fileA}
                           pdfUrl={pdfUrlA || pdfA}
-                          imageSrc={initialImageA}
+                          imageSrc={initialImageA || renderedImageA || imageA}
                           title={docAName || 'Document A (Staging Reference Standard)'}
                           badge="Slide A"
                           subtitle="✓ Staging Master (Error-Free Reference)"
-                          isAuditTarget={false}
+                          isAuditTarget={highlightTarget === 'both'}
                           isWordToPdf={isWordToPdf}
                           isIsiComparison={isIsiComparison}
+                          isiLineResults={isiLineResults}
                           scale={pdfZoom}
                           pageNumber={pdfPage}
                           onPageChange={setPdfPage}
                           onTotalPagesChange={setPdfTotalPages}
                           scrollRef={leftSlideRef}
                           onScroll={handleLeftScroll}
-                          discrepancies={EMPTY_DISCREPANCIES}
+                          discrepancies={highlightTarget === 'both' ? proofreadingErrors : EMPTY_DISCREPANCIES}
                           canvasRefCallback={(node) => {
                             stagingCanvasRef.current = node;
                           }}

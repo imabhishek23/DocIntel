@@ -18,9 +18,18 @@ import {
   RefreshCw,
 } from 'lucide-react';
 
-// Initialize PDF.js worker
-if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+// Initialize PDF.js worker with reliable CDN fallback
+if (typeof window !== 'undefined') {
+  if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        pdfjsWorker ||
+        `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version || '3.11.174'}/pdf.worker.min.js`;
+    } catch (_) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js`;
+    }
+  }
 }
 
 /**
@@ -687,8 +696,11 @@ export default function PdfVisualViewer({
       return;
     }
 
-    const source = pdfUrl || file;
-    if (!source) {
+    // Prioritize direct File/Blob object (avoids expired blob URLs and cross-origin issues)
+    const primarySource = (file instanceof Blob || file instanceof File) ? file : (pdfUrl || file);
+    const fallbackSource = (primarySource === file) ? pdfUrl : file;
+
+    if (!primarySource && !fallbackSource) {
       setLoading(false);
       return;
     }
@@ -698,36 +710,52 @@ export default function PdfVisualViewer({
         setLoading(true);
         setError(null);
 
-        let loadingTask;
+        async function extractUint8(src) {
+          if (!src) return null;
+          if (src instanceof Blob || src instanceof File) {
+            const ab = await src.arrayBuffer();
+            return new Uint8Array(ab);
+          }
+          if (src instanceof Uint8Array) return src;
+          if (src instanceof ArrayBuffer) return new Uint8Array(src);
+          if (typeof src === 'string') {
+            if (src.startsWith('data:') || src.includes(';base64,')) {
+              return toUint8Array(src);
+            }
+            if (src.startsWith('blob:')) {
+              try {
+                const resp = await fetch(src);
+                if (resp.ok) {
+                  const ab = await resp.arrayBuffer();
+                  return new Uint8Array(ab);
+                }
+              } catch (e) {
+                console.warn('[PdfVisualViewer] blob URL fetch failed, trying next source:', e);
+              }
+            }
+          }
+          return null;
+        }
 
-        // 1. Direct File / Blob Object
-        if (source instanceof Blob || source instanceof File) {
-          const arrayBuffer = await source.arrayBuffer();
-          loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+        let uint8 = await extractUint8(primarySource);
+        if (!uint8 && fallbackSource) {
+          uint8 = await extractUint8(fallbackSource);
         }
-        // 2. Base64 Data URL (e.g. data:application/pdf;base64,...)
-        else if (typeof source === 'string' && (source.startsWith('data:') || source.includes(';base64,'))) {
-          const uint8 = toUint8Array(source);
-          loadingTask = pdfjsLib.getDocument({ data: uint8 });
-        }
-        // 3. Blob URL (fetch array buffer on main thread to avoid worker cross-origin issues)
-        else if (typeof source === 'string' && source.startsWith('blob:')) {
-          const resp = await fetch(source);
-          const arrayBuffer = await resp.arrayBuffer();
-          loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
-        }
-        // 4. Raw Uint8Array or ArrayBuffer
-        else if (source instanceof Uint8Array || source instanceof ArrayBuffer) {
-          loadingTask = pdfjsLib.getDocument({ data: source });
-        }
-        // 5. Object with data property
-        else if (source?.data) {
-          loadingTask = pdfjsLib.getDocument(source);
-        }
-        // 6. Regular HTTP URL
-        else if (typeof source === 'string') {
-          loadingTask = pdfjsLib.getDocument(source);
+
+        const cMapConfig = {
+          cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjsLib.version || '3.11.174'}/cmaps/`,
+          cMapPacked: true,
+        };
+
+        let loadingTask;
+        if (uint8) {
+          loadingTask = pdfjsLib.getDocument({ data: uint8, ...cMapConfig });
+        } else if (typeof primarySource === 'string') {
+          loadingTask = pdfjsLib.getDocument({ url: primarySource, ...cMapConfig });
+        } else if (typeof fallbackSource === 'string') {
+          loadingTask = pdfjsLib.getDocument({ url: fallbackSource, ...cMapConfig });
         } else {
+          setError('No readable document source available.');
           setLoading(false);
           return;
         }
@@ -1100,9 +1128,11 @@ export default function PdfVisualViewer({
                       return true;
                     })
                     .map((hl) => {
-                      const isSelected =
-                        selectedError?.id === hl.discrepancy?.id ||
-                        selectedError?.id === hl.id;
+                      const isMatch = !!hl.isMatch;
+                      const isSelected = !!(
+                        (selectedError?.id && hl.discrepancy?.id && selectedError.id === hl.discrepancy.id) ||
+                        (selectedError?.id && hl.id && selectedError.id === hl.id)
+                      );
 
                       const boxes =
                         hl.boxes && hl.boxes.length > 0
@@ -1110,8 +1140,6 @@ export default function PdfVisualViewer({
                           : hl.box
                           ? [hl.box]
                           : [];
-
-                      const isMatch = !!hl.isMatch;
 
                       return (
                         <React.Fragment key={hl.id}>
@@ -1124,16 +1152,18 @@ export default function PdfVisualViewer({
                                 width: `${Math.max(box.w, 14)}px`,
                                 height: `${Math.max(box.h, 12)}px`,
                               }}
-                              className={`absolute pointer-events-auto cursor-pointer rounded transition-colors duration-100 group ${
-                                isSelected
-                                  ? 'border-2 border-red-600 bg-red-500/35 ring-4 ring-red-400/60 z-30 shadow-[0_0_16px_rgba(239,68,68,0.7)]'
-                                  : isMatch
-                                  ? 'border-2 border-emerald-500 bg-emerald-500/20 hover:bg-emerald-500/35 hover:border-emerald-600 z-10 shadow-[0_0_8px_rgba(16,185,129,0.35)]'
+                              className={`absolute pointer-events-auto cursor-pointer rounded transition-all duration-150 group ${
+                                isMatch
+                                  ? isSelected
+                                    ? 'border-2 border-emerald-600 bg-emerald-400/40 ring-4 ring-emerald-400/80 z-30 shadow-[0_0_18px_rgba(16,185,129,0.7)]'
+                                    : 'border-2 border-emerald-500 bg-emerald-400/25 hover:bg-emerald-400/45 hover:border-emerald-600 z-10 shadow-[0_0_10px_rgba(16,185,129,0.4)]'
+                                  : isSelected
+                                  ? 'border-2 border-rose-600 bg-rose-500/40 ring-4 ring-rose-400/80 z-30 shadow-[0_0_18px_rgba(239,68,68,0.7)]'
                                   : hl.isMissingWord
-                                  ? 'border-2 border-dashed border-red-600 bg-red-500/35 ring-2 ring-red-400/50 z-25 shadow-[0_0_12px_rgba(239,68,68,0.6)]'
+                                  ? 'border-2 border-dashed border-rose-600 bg-rose-500/35 ring-2 ring-rose-400/50 z-25 shadow-[0_0_12px_rgba(239,68,68,0.6)]'
                                   : hl.isColorDiff
                                   ? 'border-2 border-amber-500 bg-amber-500/25 hover:bg-amber-500/40 hover:border-amber-600 z-15 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
-                                  : 'border-2 border-rose-500 bg-rose-500/20 hover:bg-rose-500/35 hover:border-rose-600 z-10 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
+                                  : 'border-2 border-rose-500 bg-rose-500/25 hover:bg-rose-500/40 hover:border-rose-600 z-10 shadow-[0_0_10px_rgba(244,63,94,0.45)]'
                               }`}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -1141,9 +1171,9 @@ export default function PdfVisualViewer({
                               }}
                               title={
                                 hl.isMissingWord
-                                  ? `⚠ Missing in PDF: "${hl.target}" (Expected from Word master)`
+                                  ? `⚠ Missing in PDF: "${hl.target}"`
                                   : isMatch
-                                  ? `✓ Approved Word Match: "${hl.target}"`
+                                  ? `✓ Approved ISI Match: "${hl.target}"`
                                   : `#${hl.index} ${hl.category}: ${hl.details}`
                               }
                             >
@@ -1151,16 +1181,16 @@ export default function PdfVisualViewer({
                               {bIdx === 0 && (
                                 <span
                                   className={`absolute -top-3.5 -left-2 flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full text-white text-[9px] font-black shadow-md border border-white whitespace-nowrap ${
-                                    hl.isMissingWord
-                                      ? 'bg-red-700 ring-2 ring-red-300'
-                                      : isMatch
-                                      ? 'bg-emerald-600'
+                                    isMatch
+                                      ? 'bg-emerald-600 ring-2 ring-emerald-300'
+                                      : hl.isMissingWord
+                                      ? 'bg-rose-700 ring-2 ring-rose-300'
                                       : hl.isColorDiff
-                                      ? 'bg-amber-600'
-                                      : 'bg-red-600'
+                                      ? 'bg-amber-600 ring-2 ring-amber-300'
+                                      : 'bg-rose-600 ring-2 ring-rose-300'
                                   }`}
                                 >
-                                  {hl.isMissingWord ? `^ Missing: "${hl.target}"` : isMatch ? '✓' : hl.index}
+                                  {isMatch ? '✓' : hl.isMissingWord ? `^ Missing: "${hl.target}"` : hl.index}
                                 </span>
                               )}
 

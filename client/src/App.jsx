@@ -29,7 +29,10 @@ export default function App() {
   }, []);
 
   const handleSelectReviewFromHistory = (review) => {
-    setLoadedReview(review);
+    const normalized = review?.result && typeof review.result === 'object'
+      ? { ...review.result, ...review }
+      : review;
+    setLoadedReview(normalized);
     setCurrentTab(review.mode === 'compare' ? 'compare' : 'analyze');
   };
 
