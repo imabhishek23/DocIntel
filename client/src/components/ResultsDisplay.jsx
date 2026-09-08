@@ -1448,7 +1448,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           title={docAName || 'Document A (Staging Reference Standard)'}
                           badge="Slide A"
                           subtitle="✓ Staging Master (Error-Free Reference)"
-                          isAuditTarget={highlightTarget === 'both'}
+                          isAuditTarget={false}
                           isWordToPdf={isWordToPdf}
                           isIsiComparison={isIsiComparison}
                           isiLineResults={isiLineResults}
@@ -1458,7 +1458,8 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           onTotalPagesChange={setPdfTotalPages}
                           scrollRef={leftSlideRef}
                           onScroll={handleLeftScroll}
-                          discrepancies={highlightTarget === 'both' ? proofreadingErrors : EMPTY_DISCREPANCIES}
+                          discrepancies={EMPTY_DISCREPANCIES}
+                          matchingTokens={EMPTY_DISCREPANCIES}
                           canvasRefCallback={(node) => {
                             stagingCanvasRef.current = node;
                           }}

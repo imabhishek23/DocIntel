@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { initStorage, saveReview, listReviews, getReviewById, clearReviews, getStorageStatus } from './storage.js';
 import { extractDocumentText, extractDocxHtml } from './extractors.js';
 import { extractDeterministicFields, diffDeterministic, computeVisualWordDiff } from './deterministic.js';
-import { analyzeDocument, compareDocuments, answerReviewQuestion } from './aiEngine.js';
+import { analyzeDocument, compareDocuments, answerReviewQuestion, buildHeuristicComparison } from './aiEngine.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -223,9 +223,15 @@ app.post(
       console.log(`[API /compare] Deterministic diff complete: ${visualDiff.proofreadingErrors?.length || 0} proofreading errors found.`);
 
       // Step 3: AI / Forensic Comparison
-      console.log('[API /compare] Starting AI semantic comparison...');
-      const result = await compareDocuments(textA, textB, detA, detB, deterministicDiffs, OPENROUTER_KEY);
-      console.log('[API /compare] AI semantic comparison complete.');
+      let result;
+      if (visualDiff.isIsiComparison) {
+        console.log('[API /compare] ISI comparison detected. Using fast deterministic synthesis.');
+        result = buildHeuristicComparison(textA, textB, detA, detB, deterministicDiffs);
+      } else {
+        console.log('[API /compare] Starting AI semantic comparison...');
+        result = await compareDocuments(textA, textB, detA, detB, deterministicDiffs, OPENROUTER_KEY);
+      }
+      console.log('[API /compare] Semantic comparison complete.');
 
       // Step 4: Save to storage
       const saved = await saveReview({

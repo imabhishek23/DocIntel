@@ -77,7 +77,8 @@ export async function initStorage() {
   try {
     console.log('[STORAGE] Connecting to MongoDB Atlas...');
     await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 6000,
+      serverSelectionTimeoutMS: 2000,
+      connectTimeoutMS: 2000,
     });
     isMongoConnected = true;
     mongoModel = mongoose.models.Review || mongoose.model('Review', ReviewSchema);

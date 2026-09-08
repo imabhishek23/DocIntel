@@ -24,7 +24,7 @@ async function callOpenRouter(apiKey, messages, maxTokens = 2500) {
   for (const model of MODEL_CANDIDATES) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
 
       const response = await fetch(OPENROUTER_URL, {
         method: 'POST',
@@ -402,7 +402,7 @@ function buildHeuristicAnalysis(text, deterministicData) {
   };
 }
 
-function buildHeuristicComparison(textA, textB, detA, detB, deterministicDiffs) {
+export function buildHeuristicComparison(textA, textB, detA, detB, deterministicDiffs) {
   const changes = [];
   let score = 85;
 

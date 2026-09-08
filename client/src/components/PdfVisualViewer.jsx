@@ -653,6 +653,8 @@ function detectColorDifferences(canvasA, canvasB, existingHighlights, dpr) {
   }
 }
 
+const EMPTY_ARRAY = [];
+
 export default function PdfVisualViewer({
   file,
   pdfUrl,
@@ -664,15 +666,15 @@ export default function PdfVisualViewer({
   isAuditTarget = false,
   isWordToPdf = false,
   isIsiComparison = false,
-  isiLineResults = [],
+  isiLineResults = EMPTY_ARRAY,
   scale = 1.0,
   pageNumber = 1,
   onPageChange,
   onTotalPagesChange,
   scrollRef,
   onScroll,
-  discrepancies = [],
-  matchingTokens = [],
+  discrepancies = EMPTY_ARRAY,
+  matchingTokens = EMPTY_ARRAY,
   selectedDiscrepancyId = null,
   onOpenComment,
   onRenderSuccess,
@@ -833,6 +835,7 @@ export default function PdfVisualViewer({
 
   // Render Page to Canvas and Compute In-Place Discrepancy Highlights
   const renderTaskRef = useRef(null);
+  const [renderedPageInfo, setRenderedPageInfo] = useState(null);
 
   useEffect(() => {
     let isCancelled = false;
@@ -896,6 +899,7 @@ export default function PdfVisualViewer({
         if (isCancelled) return;
 
         setLoading(false);
+        setRenderedPageInfo({ page, viewport, dpr, safePageNum });
 
         // Notify parent of canvas reference for color diffing
         if (canvasRefCallback) {
@@ -914,47 +918,6 @@ export default function PdfVisualViewer({
           } catch (e) {
             console.warn('[PdfVisualViewer] toDataURL error:', e);
           }
-        }
-
-        // HIGHLIGHT CALCULATION: Only on Slide B (Audit Target)
-        // Slide A (Staging) remains 100% clean and pristine!
-        if (isAuditTarget) {
-          try {
-            const textContent = await page.getTextContent();
-            if (isCancelled) return;
-
-            // 1. Text & Formatting discrepancy bounding boxes
-            const textHighlights = computePageHighlights(
-              textContent.items,
-              viewport,
-              discrepancies,
-              matchingTokens,
-              dpr,
-              isWordToPdf,
-              isIsiComparison,
-              isiLineResults
-            );
-
-            // 2. Color difference detection between Baseline (Staging) & Revision (Composite)
-            // (Skipped in ISI mode to prevent false color shifts on promotional graphics)
-            let colorHighlights = [];
-            if (!isIsiComparison && baselineCanvasRef?.current) {
-              colorHighlights = detectColorDifferences(
-                baselineCanvasRef.current,
-                canvas,
-                textHighlights,
-                dpr
-              );
-            }
-
-            const combinedHighlights = [...textHighlights, ...colorHighlights];
-            setPageHighlights(combinedHighlights);
-          } catch (err) {
-            console.warn('[PdfVisualViewer] Highlight calculation error:', err);
-          }
-        } else {
-          // Slide A master standard: clean slate
-          setPageHighlights([]);
         }
       } catch (err) {
         clearTimeout(watchdogTimer);
@@ -985,7 +948,61 @@ export default function PdfVisualViewer({
         renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, pageNumber, scale, isImageMode, isAuditTarget, discrepancies, matchingTokens, isIsiComparison, isiLineResults]);
+  }, [pdfDoc, pageNumber, scale, isImageMode]);
+
+  // Compute In-Place Highlights (Independent of canvas render lifecycle)
+  useEffect(() => {
+    let isCancelled = false;
+
+    if (!isAuditTarget || !renderedPageInfo) {
+      setPageHighlights([]);
+      return;
+    }
+
+    async function computeHighlights() {
+      try {
+        const { page, viewport, dpr } = renderedPageInfo;
+        const textContent = await page.getTextContent();
+        if (isCancelled) return;
+
+        // 1. Text & Formatting discrepancy bounding boxes
+        const textHighlights = computePageHighlights(
+          textContent.items,
+          viewport,
+          discrepancies,
+          matchingTokens,
+          dpr,
+          isWordToPdf,
+          isIsiComparison,
+          isiLineResults
+        );
+
+        // 2. Color difference detection between Baseline (Staging) & Revision (Composite)
+        // (Skipped in ISI mode to prevent false color shifts on promotional graphics)
+        let colorHighlights = [];
+        if (!isIsiComparison && baselineCanvasRef?.current && canvasRef.current) {
+          colorHighlights = detectColorDifferences(
+            baselineCanvasRef.current,
+            canvasRef.current,
+            textHighlights,
+            dpr
+          );
+        }
+
+        if (!isCancelled) {
+          setPageHighlights([...textHighlights, ...colorHighlights]);
+        }
+      } catch (err) {
+        console.warn('[PdfVisualViewer] Highlight calculation error:', err);
+      }
+    }
+
+    computeHighlights();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [renderedPageInfo, isAuditTarget, discrepancies, matchingTokens, isIsiComparison, isiLineResults]);
 
   const handleCopySnippet = (snippet) => {
     navigator.clipboard.writeText(snippet);
