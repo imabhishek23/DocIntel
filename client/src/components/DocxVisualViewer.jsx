@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { renderAsync } from 'docx-preview';
 import { FileText, Copy, Check, Search, ShieldCheck, Sparkles, BookOpen } from 'lucide-react';
 
 export default function DocxVisualViewer({
+  file,
   title = 'Approved Word Document (Master Reference)',
   badge = 'Slide A',
   subtitle = '✓ Approved Reference Standard (.docx)',
@@ -13,6 +15,37 @@ export default function DocxVisualViewer({
 }) {
   const [copied, setCopied] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [isRenderedDocx, setIsRenderedDocx] = useState(false);
+  const docxContainerRef = useRef(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (file && (file instanceof Blob || file instanceof File) && docxContainerRef.current) {
+      file.arrayBuffer().then((buffer) => {
+        if (!isMounted || !docxContainerRef.current) return;
+        docxContainerRef.current.innerHTML = '';
+        renderAsync(buffer, docxContainerRef.current, null, {
+          className: 'docx-rendered-document',
+          inWrapper: false,
+          ignoreWidth: true,
+          ignoreHeight: false,
+          experimental: true,
+        })
+          .then(() => {
+            if (isMounted) setIsRenderedDocx(true);
+          })
+          .catch((err) => {
+            console.warn('[DocxVisualViewer] docx-preview failed, using html fallback:', err);
+            if (isMounted) setIsRenderedDocx(false);
+          });
+      }).catch(() => {
+        if (isMounted) setIsRenderedDocx(false);
+      });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [file]);
 
   const handleCopy = () => {
     const raw = text || (docxHtml ? docxHtml.replace(/<[^>]+>/g, ' ') : '');
@@ -59,7 +92,7 @@ export default function DocxVisualViewer({
           </span>
           <button
             onClick={handleCopy}
-            className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition shadow-2xs"
+            className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition shadow-2xs cursor-pointer"
             title="Copy full document text"
           >
             {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
@@ -82,23 +115,33 @@ export default function DocxVisualViewer({
               <BookOpen className="h-3.5 w-3.5 text-emerald-600" />
               Master Approved Copy (Source of Truth)
             </span>
-            <span className="text-[11px] italic text-slate-400">Formatted from .docx</span>
+            <span className="text-[11px] italic text-slate-400">
+              {isRenderedDocx ? 'Original Word Layout (.docx)' : 'Formatted from .docx'}
+            </span>
           </div>
 
-          {/* Render Mammoth HTML if available, otherwise formatted text */}
-          {docxHtml ? (
-            <div
-              className="docx-rendered-content space-y-3 text-slate-800 leading-relaxed font-sans text-[13px]"
-              dangerouslySetInnerHTML={{ __html: docxHtml }}
-            />
-          ) : text ? (
-            <div className="space-y-3 text-slate-800 leading-relaxed font-sans text-[13px] whitespace-pre-wrap">
-              {text}
-            </div>
-          ) : (
-            <div className="text-center py-12 text-slate-400 italic">
-              No document text content available.
-            </div>
+          {/* Authentic Word docx preview rendered directly from file */}
+          <div
+            ref={docxContainerRef}
+            className={`docx-preview-container ${isRenderedDocx ? 'block' : 'hidden'}`}
+          />
+
+          {/* Fallback to Mammoth HTML or formatted text */}
+          {!isRenderedDocx && (
+            docxHtml ? (
+              <div
+                className="docx-rendered-content space-y-3 text-slate-800 leading-relaxed font-sans text-[13px]"
+                dangerouslySetInnerHTML={{ __html: docxHtml }}
+              />
+            ) : text ? (
+              <div className="space-y-3 text-slate-800 leading-relaxed font-sans text-[13px] whitespace-pre-wrap">
+                {text}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-slate-400 italic">
+                No document text content available.
+              </div>
+            )
           )}
         </div>
       </div>

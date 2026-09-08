@@ -48,12 +48,17 @@ function toUint8Array(dataUrlOrBase64) {
 /**
  * Maps proofreading discrepancies to exact CSS bounding boxes on the PDF canvas page
  */
-function computePageHighlights(items, viewport, discrepancies = [], matchingTokens = [], dpr = 1, isWordToPdf = false) {
-  if (
-    !items ||
-    items.length === 0 ||
-    ((!discrepancies || discrepancies.length === 0) && (!matchingTokens || matchingTokens.length === 0))
-  ) {
+function computePageHighlights(
+  items,
+  viewport,
+  discrepancies = [],
+  matchingTokens = [],
+  dpr = 1,
+  isWordToPdf = false,
+  isIsiComparison = false,
+  isiLineResults = []
+) {
+  if (!items || items.length === 0) {
     return [];
   }
 
@@ -85,6 +90,112 @@ function computePageHighlights(items, viewport, discrepancies = [], matchingToke
       h: Math.abs(rect[3] - rect[1]) / dpr,
     };
   });
+
+  // ── STRICT ISI LINE-BY-LINE VISUAL HIGHLIGHTING (Requirements 1-11) ──
+  if (isIsiComparison && Array.isArray(isiLineResults) && isiLineResults.length > 0) {
+    // 1. Group rendered PDF text items into distinct visual lines by baseline rawY
+    const lineMap = new Map();
+    for (const it of itemBoxes) {
+      if (!it.cleanStr) continue;
+      let matchedY = null;
+      for (const y of lineMap.keys()) {
+        if (Math.abs(y - it.rawY) < 4) {
+          matchedY = y;
+          break;
+        }
+      }
+      if (matchedY !== null) {
+        lineMap.get(matchedY).push(it);
+      } else {
+        lineMap.set(it.rawY, [it]);
+      }
+    }
+
+    // Sort lines descending by rawY (top of page first in PDF coordinates)
+    const sortedEntries = [...lineMap.entries()].sort((a, b) => b[0] - a[0]);
+
+    const pageLines = sortedEntries.map(([rawY, lineItems]) => {
+      const sorted = [...lineItems].sort((a, b) => a.x - b.x);
+      const text = sorted.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
+      const minX = Math.min(...sorted.map((m) => m.x));
+      const minY = Math.min(...sorted.map((m) => m.y));
+      const maxX = Math.max(...sorted.map((m) => m.x + m.w));
+      const maxY = Math.max(...sorted.map((m) => m.y + m.h));
+      return {
+        rawY,
+        text,
+        clean: text.toLowerCase().replace(/[^a-z0-9]/g, ''),
+        box: {
+          x: Math.round(minX - 3),
+          y: Math.round(minY - 2),
+          w: Math.round(maxX - minX + 6),
+          h: Math.round(maxY - minY + 4),
+        },
+      };
+    });
+
+    const highlights = [];
+    const usedIndices = new Set();
+
+    for (const lr of isiLineResults) {
+      const lrClean = (lr.text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (!lrClean && lr.text !== '•' && lr.text !== '-' && lr.text !== '*') continue;
+
+      let matchedLine = null;
+      let matchedIdx = -1;
+
+      for (let pIdx = 0; pIdx < pageLines.length; pIdx++) {
+        if (usedIndices.has(pIdx)) continue;
+        const pl = pageLines[pIdx];
+
+        if (
+          (lrClean.length >= 4 && (pl.clean.includes(lrClean) || lrClean.includes(pl.clean))) ||
+          (lrClean.length < 4 && (pl.text === lr.text || pl.clean === lrClean))
+        ) {
+          matchedLine = pl;
+          matchedIdx = pIdx;
+          break;
+        }
+      }
+
+      if (matchedLine) {
+        usedIndices.add(matchedIdx);
+        const isMatch = lr.color === 'green';
+
+        highlights.push({
+          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
+          index: lr.lineNum || lr.lineIndex,
+          target: lr.text,
+          box: matchedLine.box,
+          boxes: [matchedLine.box],
+          isMatch,
+          isError: !isMatch,
+          color: lr.color,
+          category: isMatch
+            ? 'Approved ISI Match'
+            : lr.status === 'extra_line'
+            ? 'Extra Line'
+            : (lr.comment || '').includes('Missing')
+            ? 'Missing Word'
+            : 'Line Discrepancy',
+          details: lr.comment || (isMatch ? 'Complete line match' : 'Line discrepancy detected'),
+          comment: lr.comment,
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+          isLineDiscrepancy: !isMatch,
+        });
+      }
+    }
+
+    return highlights;
+  }
+
+  if (
+    (!discrepancies || discrepancies.length === 0) &&
+    (!matchingTokens || matchingTokens.length === 0)
+  ) {
+    return [];
+  }
 
   const highlights = [];
 
@@ -524,6 +635,8 @@ export default function PdfVisualViewer({
   badgeColor = 'emerald', // 'emerald' | 'rose' | 'indigo'
   isAuditTarget = false,
   isWordToPdf = false,
+  isIsiComparison = false,
+  isiLineResults = [],
   scale = 1.0,
   pageNumber = 1,
   onPageChange,
@@ -739,12 +852,15 @@ export default function PdfVisualViewer({
               discrepancies,
               matchingTokens,
               dpr,
-              isWordToPdf
+              isWordToPdf,
+              isIsiComparison,
+              isiLineResults
             );
 
             // 2. Color difference detection between Baseline (Staging) & Revision (Composite)
+            // (Skipped in ISI mode to prevent false color shifts on promotional graphics)
             let colorHighlights = [];
-            if (baselineCanvasRef?.current) {
+            if (!isIsiComparison && baselineCanvasRef?.current) {
               colorHighlights = detectColorDifferences(
                 baselineCanvasRef.current,
                 canvas,
@@ -787,7 +903,7 @@ export default function PdfVisualViewer({
         renderTaskRef.current = null;
       }
     };
-  }, [pdfDoc, pageNumber, scale, isImageMode, isAuditTarget, discrepancies, matchingTokens]);
+  }, [pdfDoc, pageNumber, scale, isImageMode, isAuditTarget, discrepancies, matchingTokens, isIsiComparison, isiLineResults]);
 
   const handleCopySnippet = (snippet) => {
     navigator.clipboard.writeText(snippet);

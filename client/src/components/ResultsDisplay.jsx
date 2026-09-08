@@ -83,6 +83,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     matchingTokens = [],
     isiAudit,
     mismatchReport = [],
+    isiLineResults = [],
     isIsiComparison = false,
     isiComplianceScore,
     isiDetectedBlocks = [],
@@ -1440,6 +1441,8 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                           badge="Slide A"
                           subtitle="✓ Staging Master (Error-Free Reference)"
                           isAuditTarget={false}
+                          isWordToPdf={isWordToPdf}
+                          isIsiComparison={isIsiComparison}
                           scale={pdfZoom}
                           pageNumber={pdfPage}
                           onPageChange={setPdfPage}
@@ -1490,6 +1493,8 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                         subtitle="⚠ Composite Audit Target"
                         isAuditTarget={true}
                         isWordToPdf={isWordToPdf}
+                        isIsiComparison={isIsiComparison}
+                        isiLineResults={isiLineResults}
                         scale={pdfZoom}
                         pageNumber={pdfPage}
                         onPageChange={setPdfPage}
