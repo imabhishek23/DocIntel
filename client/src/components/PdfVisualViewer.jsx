@@ -48,7 +48,7 @@ function toUint8Array(dataUrlOrBase64) {
 /**
  * Maps proofreading discrepancies to exact CSS bounding boxes on the PDF canvas page
  */
-function computePageHighlights(items, viewport, discrepancies = [], matchingTokens = [], dpr = 1) {
+function computePageHighlights(items, viewport, discrepancies = [], matchingTokens = [], dpr = 1, isWordToPdf = false) {
   if (
     !items ||
     items.length === 0 ||
@@ -329,14 +329,14 @@ function computePageHighlights(items, viewport, discrepancies = [], matchingToke
       const normTarget = targetStr.replace(/\s+/g, ' ').toLowerCase();
 
       for (let i = 0; i < itemBoxes.length; i++) {
-        // Skip non-ISI promotional elements
-        if (NON_ISI_TEXT_REGEX.test(itemBoxes[i].cleanStr)) continue;
+        // Skip non-ISI promotional elements ONLY in Word-to-PDF ISI comparison
+        if (isWordToPdf && NON_ISI_TEXT_REGEX.test(itemBoxes[i].cleanStr)) continue;
 
         let combined = '';
         const span = [];
         for (let j = i; j < Math.min(itemBoxes.length, i + 6); j++) {
           const it = itemBoxes[j];
-          if (NON_ISI_TEXT_REGEX.test(it.cleanStr)) break;
+          if (isWordToPdf && NON_ISI_TEXT_REGEX.test(it.cleanStr)) break;
           span.push(it);
           combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
 
@@ -523,6 +523,7 @@ export default function PdfVisualViewer({
   badge = 'Reference',
   badgeColor = 'emerald', // 'emerald' | 'rose' | 'indigo'
   isAuditTarget = false,
+  isWordToPdf = false,
   scale = 1.0,
   pageNumber = 1,
   onPageChange,
@@ -737,7 +738,8 @@ export default function PdfVisualViewer({
               viewport,
               discrepancies,
               matchingTokens,
-              dpr
+              dpr,
+              isWordToPdf
             );
 
             // 2. Color difference detection between Baseline (Staging) & Revision (Composite)

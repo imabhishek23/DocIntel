@@ -102,6 +102,8 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     docBName?.toLowerCase().endsWith('.doc')
   );
 
+  const isWordToPdf = isDocxA && !isDocxB;
+
   const [renderedImageA, setRenderedImageA] = useState(null);
   const [renderedImageB, setRenderedImageB] = useState(null);
   const imageA = initialImageA || renderedImageA;
@@ -126,7 +128,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
   const [pdfTotalPages, setPdfTotalPages] = useState(1);
 
   const [activeTab, setActiveTab] = useState(
-    mode === 'compare' ? (mismatchReport.length > 0 || isIsiComparison ? 'mismatchReport' : 'proofreading') : 'findings'
+    mode === 'compare' ? (isWordToPdf && (mismatchReport.length > 0 || isIsiComparison) ? 'mismatchReport' : 'proofreading') : 'findings'
   );
   const [diffView, setDiffView] = useState('slides'); // 'slides' | 'proofread' | 'inline' | 'slider' | 'images'
   const [highlightTarget, setHighlightTarget] = useState('composite'); // 'composite' | 'both'
@@ -802,19 +804,19 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {/* 1. Similarity / ISI Compliance */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm flex flex-col justify-center items-center text-center relative overflow-hidden">
-              {isIsiComparison && (
+              {isWordToPdf && isIsiComparison && (
                 <div className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider border border-emerald-300">
                   <Sparkles className="h-2.5 w-2.5 text-emerald-600" />
                   ISI Safety Mode
                 </div>
               )}
               <span className="font-display text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight">
-                {isIsiComparison && isiComplianceScore !== undefined ? isiComplianceScore : similarity}%
+                {isWordToPdf && isIsiComparison && isiComplianceScore !== undefined ? isiComplianceScore : similarity}%
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                {isIsiComparison ? 'ISI Compliance Score' : 'Similarity'}
+                {isWordToPdf && isIsiComparison ? 'ISI Compliance Score' : 'Similarity'}
               </span>
-              {isIsiComparison && (
+              {isWordToPdf && isIsiComparison && (
                 <span className="mt-1 text-[10px] text-slate-500 font-medium">
                   Word Master Source of Truth (Non-ISI elements ignored)
                 </span>
@@ -827,7 +829,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                 +{wordsAdded}
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-emerald-700">
-                {isIsiComparison ? 'Extra Words in ISI' : 'Words Added'}
+                {isWordToPdf && isIsiComparison ? 'Extra Words in ISI' : 'Words Added'}
               </span>
             </div>
 
@@ -837,7 +839,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                 -{wordsRemoved}
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-rose-700">
-                {isIsiComparison ? 'Missing Words in ISI' : 'Words Removed'}
+                {isWordToPdf && isIsiComparison ? 'Missing Words in ISI' : 'Words Removed'}
               </span>
             </div>
           </div>
@@ -1487,6 +1489,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
                         badge="Slide B"
                         subtitle="⚠ Composite Audit Target"
                         isAuditTarget={true}
+                        isWordToPdf={isWordToPdf}
                         scale={pdfZoom}
                         pageNumber={pdfPage}
                         onPageChange={setPdfPage}
@@ -1927,17 +1930,19 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
         {mode === 'compare' && (
           <>
-            <button
-              onClick={() => setActiveTab('mismatchReport')}
-              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
-                activeTab === 'mismatchReport'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:bg-slate-100'
-              }`}
-            >
-              <ShieldAlert className="h-4 w-4" />
-              📋 Mismatch Report ({mismatchReport.length})
-            </button>
+            {isWordToPdf && isIsiComparison && (
+              <button
+                onClick={() => setActiveTab('mismatchReport')}
+                className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+                  activeTab === 'mismatchReport'
+                    ? 'bg-rose-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-slate-100'
+                }`}
+              >
+                <ShieldAlert className="h-4 w-4" />
+                📋 Mismatch Report ({mismatchReport.length})
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('proofreading')}
               className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
@@ -1949,7 +1954,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
               <CheckCircle2 className="h-4 w-4" />
               Proofreading Errors ({errorSummary.total})
             </button>
-            {isiAudit && (isiAudit.totalOccurrences > 0 || isiAudit.isIsiAudit) && (
+            {isWordToPdf && isiAudit && (isiAudit.totalOccurrences > 0 || isiAudit.isIsiAudit) && (
               <button
                 onClick={() => setActiveTab('isiAudit')}
                 className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
@@ -2032,7 +2037,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
       </div>
 
       {/* TAB: Detailed ISI Mismatch Report (Requirement 15) */}
-      {activeTab === 'mismatchReport' && mode === 'compare' && (
+      {activeTab === 'mismatchReport' && mode === 'compare' && isWordToPdf && (
         <div className="space-y-4">
           {/* Header Card */}
           <div className="rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-950 via-slate-900 to-indigo-950 p-6 text-white shadow-md">
@@ -2340,7 +2345,7 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
       )}
 
       {/* TAB: ISI Multi-Occurrence Safety Audit */}
-      {activeTab === 'isiAudit' && isiAudit && (
+      {activeTab === 'isiAudit' && isiAudit && isWordToPdf && (
         <div className="space-y-6">
           {/* Header Card */}
           <div className="rounded-2xl border border-purple-200 bg-gradient-to-r from-purple-950 via-slate-900 to-indigo-950 p-6 text-white shadow-md">

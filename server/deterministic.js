@@ -621,8 +621,11 @@ export function diffDeterministic(fieldsA, fieldsB, textA, textB) {
  * - Full categorized proofreading error list
  * - Accuracy and similarity indices
  */
-export function computeVisualWordDiff(textA, textB) {
-  if (isIsiMaster(textA)) {
+export function computeVisualWordDiff(textA, textB, options = {}) {
+  // CRITICAL REQUIREMENT: Targeted ISI-only comparison applies ONLY when explicitly comparing Word to PDF!
+  // PDF-to-PDF comparison must NEVER use ISI-only filtering and must retain full-document visual/text comparison.
+  const isWordToPdf = !!options.isWordToPdf;
+  if (isWordToPdf && isIsiMaster(textA)) {
     return compareTargetedIsi(textA, textB);
   }
 
@@ -817,6 +820,8 @@ export function computeVisualWordDiff(textA, textB) {
     matchingTokens,
     isiAudit,
     errorSummary,
+    isIsiComparison: false,
+    mismatchReport: [],
   };
 }
 

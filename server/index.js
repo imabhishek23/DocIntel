@@ -209,8 +209,12 @@ app.post(
       }
 
       // Step 1: Word-by-word visual diff & statistics
-      console.log('[API /compare] Computing visual & deterministic diff...');
-      const visualDiff = computeVisualWordDiff(textA, textB);
+      const isDocxA = !!(docxHtmlA || (/\.docx?$/i.test(nameA)));
+      const isPdfB = !!(pdfB || (/\.pdf$/i.test(nameB)) || fileB?.mimetype === 'application/pdf');
+      const isWordToPdf = isDocxA && isPdfB;
+
+      console.log(`[API /compare] Computing visual & deterministic diff (isWordToPdf: ${isWordToPdf})...`);
+      const visualDiff = computeVisualWordDiff(textA, textB, { isWordToPdf, docAName: nameA, docBName: nameB });
 
       // Step 2: Deterministic extraction & factual diff
       const detA = extractDeterministicFields(textA);
@@ -248,6 +252,7 @@ app.post(
           matchingTokens: visualDiff.matchingTokens || [],
           isiAudit: visualDiff.isiAudit || null,
           mismatchReport: visualDiff.mismatchReport || [],
+          isWordToPdf,
           isIsiComparison: visualDiff.isIsiComparison || false,
           isiComplianceScore: visualDiff.isiComplianceScore ?? visualDiff.similarity,
           isiDetectedBlocks: visualDiff.isiDetectedBlocks || [],
@@ -281,6 +286,7 @@ app.post(
         matchingTokens: visualDiff.matchingTokens || [],
         isiAudit: visualDiff.isiAudit || null,
         mismatchReport: visualDiff.mismatchReport || [],
+        isWordToPdf,
         isIsiComparison: visualDiff.isIsiComparison || false,
         isiComplianceScore: visualDiff.isiComplianceScore ?? visualDiff.similarity,
         isiDetectedBlocks: visualDiff.isiDetectedBlocks || [],
