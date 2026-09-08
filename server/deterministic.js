@@ -622,6 +622,10 @@ export function diffDeterministic(fieldsA, fieldsB, textA, textB) {
  * - Accuracy and similarity indices
  */
 export function computeVisualWordDiff(textA, textB) {
+  if (isIsiMaster(textA)) {
+    return compareTargetedIsi(textA, textB);
+  }
+
   const changes = diffWordsWithSpace(textA || '', textB || '');
   let wordsAdded = 0;
   let wordsRemoved = 0;
@@ -817,28 +821,80 @@ export function computeVisualWordDiff(textA, textB) {
 }
 
 /**
- * Detects and segments Important Safety Information (ISI), Indication, and Prescribing Information blocks.
- * In promotional medical materials, ISI often appears in 2-3 distinct locations:
- * - Summary / Prominent ISI banner near the top / header
- * - Patient profile / safety snapshot in the body
- * - Comprehensive Full ISI and Prescribing Information statement in the footer / trailing pages
+ * Detects if a document is an Approved ISI Master Document (Prescribing Info, Indication, Safety Warnings).
  */
-export function detectIsiBlocks(text) {
+export function isIsiMaster(text) {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  const isiTerms = [
+    'important safety information',
+    'prescribing information',
+    'indications and usage',
+    'indication',
+    'contraindications',
+    'contraindication',
+    'warnings and precautions',
+    'adverse reactions',
+    'boxed warning',
+    'immunization history',
+    'anaphylaxis',
+    'vaccine',
+    'herpes zoster',
+    'varicella',
+    'guillain-barr',
+  ];
+  let matches = 0;
+  for (const term of isiTerms) {
+    if (t.includes(term)) matches++;
+  }
+  return matches >= 1;
+}
+
+const NON_ISI_PATTERNS =
+  /^(?:[•\-*\s]*)(?:<b>\s*)?(?:Patient\s+(?:Profile|Snapshot|History)|Arthur|Diabetes|Clinical\s+Efficacy|Study\s+Design|Dosing\s+Summary|See\s+Examples|Practice|Sign\s+Up|Visit|Click\s+Here|References|Observational\s+studies|Inform\s+your\s+patients|Certain\s+chronic\s+conditions|living\s+with\s+diabetes|\d+\s+years\s+old\s+living|CONTINUED\s+BELOW|Page\s+\d+\s+of\s+\d+|Copyright|All\s+rights\s+reserved)(?:\s*<\/b>)?/i;
+
+const ISI_HEADING_REGEX =
+  /^(?:[•\-*\s]*)(?:<b>\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(&|and)\s*Important\s+Safety\s+Information|Contraindications|Warnings\s*(&|and)\s*Precautions|Adverse\s+Reactions|Patient\s+Snapshot|Safety\s+Considerations|Boxed\s+Warning)(?:\s*<\/b>)?/i;
+
+function getWordTokens(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length >= 4);
+}
+
+/**
+ * Detects and segments Important Safety Information (ISI), Indication, and Prescribing Information blocks.
+ * Filters out all promotional, patient profile, and non-ISI marketing copy.
+ */
+export function detectIsiBlocks(text, referenceMasterText = '') {
   if (!text) return [];
+  const masterWords = new Set(getWordTokens(referenceMasterText || ''));
   const lines = text.split('\n');
   const blocks = [];
   let currentBlock = null;
-
-  const ISI_HEADING_REGEX =
-    /^(?:[•\-*\s]*)(?:<b>\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(&|and)\s*Important\s+Safety\s+Information|Contraindications|Warnings\s*(&|and)\s*Precautions|Adverse\s+Reactions|Patient\s+Snapshot|Safety\s+Considerations|Boxed\s+Warning)(?:\s*<\/b>)?/i;
+  let inIsi = false;
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
     const cleanLine = rawLine.replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
     if (!cleanLine) continue;
 
-    const match = cleanLine.match(ISI_HEADING_REGEX);
-    if (match) {
+    // Strict rejection of non-ISI promotional copy & patient cards
+    if (NON_ISI_PATTERNS.test(cleanLine)) {
+      inIsi = false;
+      if (currentBlock && currentBlock.lines.length > 0) {
+        currentBlock.text = currentBlock.lines.join('\n').trim();
+        blocks.push(currentBlock);
+        currentBlock = null;
+      }
+      continue;
+    }
+
+    // Check for explicit ISI heading
+    if (ISI_HEADING_REGEX.test(cleanLine)) {
+      inIsi = true;
       if (currentBlock && currentBlock.lines.length > 0) {
         currentBlock.text = currentBlock.lines.join('\n').trim();
         blocks.push(currentBlock);
@@ -850,13 +906,48 @@ export function detectIsiBlocks(text) {
         startLine: i + 1,
         lines: [cleanLine],
       };
-    } else if (currentBlock) {
-      if (/^(?:[•\-*\s]*)(?:<b>\s*)?(?:Patient\s+Profile|Clinical\s+Efficacy|Study\s+Design|Dosing\s+Summary|References)(?:\s*<\/b>)?/i.test(cleanLine)) {
-        currentBlock.text = currentBlock.lines.join('\n').trim();
-        blocks.push(currentBlock);
-        currentBlock = null;
-      } else {
+      continue;
+    }
+
+    const lineWords = getWordTokens(cleanLine);
+    let matched = 0;
+    for (const w of lineWords) {
+      if (masterWords.has(w)) matched++;
+    }
+    const overlap = lineWords.length > 0 ? matched / lineWords.length : 0;
+
+    if (inIsi) {
+      // Continue ISI block if content overlaps or continuation line
+      if (overlap >= 0.15 || cleanLine.length < 35 || masterWords.size === 0) {
+        if (!currentBlock) {
+          currentBlock = {
+            id: `isi_${blocks.length + 1}`,
+            occurrenceIndex: blocks.length + 1,
+            heading: cleanLine,
+            startLine: i + 1,
+            lines: [],
+          };
+        }
         currentBlock.lines.push(cleanLine);
+      } else {
+        inIsi = false;
+        if (currentBlock && currentBlock.lines.length > 0) {
+          currentBlock.text = currentBlock.lines.join('\n').trim();
+          blocks.push(currentBlock);
+          currentBlock = null;
+        }
+      }
+    } else {
+      // Non-heading start of ISI content if substantial master overlap
+      if (overlap >= 0.45 && lineWords.length >= 3) {
+        inIsi = true;
+        currentBlock = {
+          id: `isi_${blocks.length + 1}`,
+          occurrenceIndex: blocks.length + 1,
+          heading: cleanLine,
+          startLine: i + 1,
+          lines: [cleanLine],
+        };
       }
     }
   }
@@ -870,13 +961,290 @@ export function detectIsiBlocks(text) {
 }
 
 /**
+ * Performs targeted ISI comparison:
+ * 1. Treats Word document as the absolute source of truth.
+ * 2. Ignores all non-ISI elements in PDF (images, logos, headers, footers, buttons, patient profiles).
+ * 3. Compares strictly PDF ISI text against corresponding Word ISI text at word and line level.
+ * 4. Highlights matching words in Green, mismatches/missing/extra in Red.
+ * 5. Generates detailed Mismatch Report (Req 15) and calculates ISI Compliance Score (Req 13).
+ */
+export function compareTargetedIsi(textWord, textPdf) {
+  const cleanWordDoc = (textWord || '').replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
+  const detectedBlocks = detectIsiBlocks(textPdf, cleanWordDoc);
+
+  // Fallback: If no structured headings detected, search for safety terms
+  if (detectedBlocks.length === 0) {
+    if (/safety|indication|contraindication|adverse|prescribing/i.test(textPdf)) {
+      detectedBlocks.push({
+        id: 'isi_1',
+        occurrenceIndex: 1,
+        heading: 'Important Safety Information & Indication',
+        startLine: 1,
+        text: textPdf,
+        lines: textPdf.split('\n'),
+      });
+    }
+  }
+
+  const pdfIsiCombined = detectedBlocks.map((b) => b.text).join('\n\n');
+
+  let totalWordsUnchanged = 0;
+  let totalWordsAdded = 0;
+  let totalWordsRemoved = 0;
+
+  const mismatchReport = [];
+  const allProofreadingErrors = [];
+  const matchingTokens = [];
+  let mismatchId = 1;
+  let tokenIdx = 1;
+
+  const diffParts = [];
+  const proofreadingParts = [];
+  const leftParts = [];
+  const rightParts = [];
+
+  // 1. Overall diff between Word master and combined PDF ISI
+  const mainDiff = diffWordsWithSpace(cleanWordDoc, pdfIsiCombined);
+  let prevWord = '';
+
+  for (let i = 0; i < mainDiff.length; i++) {
+    const part = mainDiff[i];
+    const val = (part.value || '').trim();
+    if (!val) continue;
+
+    const words = val.split(/\s+/).filter(Boolean);
+    const nextPart = mainDiff[i + 1];
+    const nextWord = (nextPart?.value || '').trim().split(/\s+/).filter(Boolean)[0] || '';
+
+    if (!part.added && !part.removed) {
+      totalWordsUnchanged += words.length;
+      diffParts.push({ type: 'unchanged', value: val });
+      proofreadingParts.push({ type: 'match', value: val, status: 'verified_match' });
+      leftParts.push({ type: 'match', value: val, status: 'verified_match' });
+      rightParts.push({ type: 'match', value: val, status: 'verified_match' });
+
+      // Collect approved word tokens for Green visual highlighting
+      for (let wIdx = 0; wIdx < words.length; wIdx += 4) {
+        const chunk = words.slice(wIdx, wIdx + 4).join(' ');
+        if (chunk.length >= 3) {
+          matchingTokens.push({
+            id: `match_${tokenIdx++}`,
+            text: chunk,
+            isApprovedMatch: true,
+            type: 'approved_match',
+          });
+        }
+      }
+      prevWord = words[words.length - 1] || prevWord;
+    } else if (part.added) {
+      totalWordsAdded += words.length;
+      diffParts.push({ type: 'added', value: val });
+      proofreadingParts.push({ type: 'error', value: val, status: 'added_or_modified' });
+      rightParts.push({ type: 'added', value: val, status: 'added_or_modified' });
+
+      // Determine which detected block contains this text
+      const ownerBlock = detectedBlocks.find((b) => b.text.includes(val)) || detectedBlocks[0] || {};
+
+      mismatchReport.push({
+        index: mismatchId++,
+        id: `mismatch_${mismatchId}`,
+        page: ownerBlock.page || 1,
+        section: ownerBlock.heading || 'Important Safety Information',
+        originalWordText: '(none - extra in PDF)',
+        pdfText: val,
+        errorType: 'Extra Word',
+        severity: 'high',
+        details: `Extra content inserted in PDF ISI: "${val}"`,
+        beforeWord: prevWord,
+        afterWord: nextWord,
+        isExtraWord: true,
+        isMissingWord: false,
+      });
+    } else if (part.removed) {
+      totalWordsRemoved += words.length;
+      diffParts.push({ type: 'removed', value: val });
+      proofreadingParts.push({ type: 'removed', value: val, status: 'deleted_from_baseline' });
+      leftParts.push({ type: 'removed', value: val, status: 'deleted_from_baseline' });
+      rightParts.push({ type: 'omitted', value: val, status: 'omitted_in_composite' });
+
+      // Determine which detected block was closest
+      const ownerBlock = detectedBlocks.find((b) => prevWord && b.text.includes(prevWord)) || detectedBlocks[0] || {};
+
+      mismatchReport.push({
+        index: mismatchId++,
+        id: `mismatch_${mismatchId}`,
+        page: ownerBlock.page || 1,
+        section: ownerBlock.heading || 'Important Safety Information',
+        originalWordText: val,
+        pdfText: '(missing in PDF)',
+        errorType: 'Missing Word',
+        severity: 'critical',
+        details: `Approved Word master content missing from PDF: "${val}"`,
+        beforeWord: prevWord,
+        afterWord: nextWord,
+        isExtraWord: false,
+        isMissingWord: true,
+      });
+    }
+  }
+
+  // 2. Fine-grained proofreading errors (spelling, capitalization, punctuation, formatting)
+  const proofErrors = detectProofreadingErrors(cleanWordDoc, pdfIsiCombined);
+  for (const pe of proofErrors) {
+    let errorType = pe.category;
+    if (pe.category === 'Word Mismatch') errorType = 'Spelling / Word Mismatch';
+    else if (pe.category === 'Formatting (Bold / Italic)') errorType = 'Formatting (Bold / Italic)';
+
+    const ownerBlock = detectedBlocks.find((b) => b.text.includes(pe.found)) || detectedBlocks[0] || {};
+
+    const alreadyReported = mismatchReport.some(
+      (m) => m.originalWordText === pe.expected && m.pdfText === pe.found
+    );
+
+    if (!alreadyReported) {
+      mismatchReport.push({
+        index: mismatchId++,
+        id: `mismatch_${mismatchId}`,
+        page: ownerBlock.page || 1,
+        section: ownerBlock.heading || 'Important Safety Information',
+        originalWordText: pe.expected,
+        pdfText: pe.found,
+        errorType: errorType,
+        severity: pe.severity || 'medium',
+        details: pe.details,
+        beforeWord: pe.beforeWord || '',
+        afterWord: pe.afterWord || '',
+        isMissingWord: pe.found === '(deleted)',
+        isExtraWord: pe.expected === '(none)',
+      });
+    }
+
+    allProofreadingErrors.push({
+      ...pe,
+      section: ownerBlock.heading || 'Important Safety Information',
+    });
+  }
+
+  // 3. Per-occurrence ISI audit
+  const occurrences = [];
+  for (let bIdx = 0; bIdx < detectedBlocks.length; bIdx++) {
+    const block = detectedBlocks[bIdx];
+    const blockText = block.text;
+    const bErrors = detectProofreadingErrors(cleanWordDoc, blockText);
+    const bDiff = diffWordsWithSpace(cleanWordDoc, blockText);
+
+    let bMatched = 0;
+    let bTotal = 0;
+    for (const p of bDiff) {
+      const w = (p.value || '').trim().split(/\s+/).filter(Boolean);
+      if (!p.added && !p.removed) {
+        bMatched += w.length;
+        bTotal += w.length;
+      } else if (p.added) {
+        bTotal += w.length;
+      }
+    }
+    const bMatchRate = bTotal > 0 ? Math.min(100, Math.round((bMatched / bTotal) * 100)) : 100;
+
+    occurrences.push({
+      id: block.id,
+      occurrenceIndex: bIdx + 1,
+      heading: block.heading,
+      snippet: blockText.slice(0, 180) + (blockText.length > 180 ? '...' : ''),
+      matchPercentage: bMatchRate,
+      matchedWordsCount: bMatched,
+      totalWordsCount: bTotal,
+      matchedPhrasesCount: matchingTokens.length,
+      discrepancyCount: bErrors.length,
+      discrepancies: bErrors,
+      status:
+        bErrors.length === 0 && bMatchRate >= 95
+          ? 'compliant'
+          : bErrors.some((e) => e.severity === 'critical')
+          ? 'critical_deviations'
+          : 'minor_deviations',
+    });
+  }
+
+  // ISI Compliance Score (Req 13: strictly on matched ISI content!)
+  const isiDenominator = totalWordsUnchanged + totalWordsAdded + totalWordsRemoved;
+  const isiComplianceScore =
+    isiDenominator > 0
+      ? Math.max(0, Math.min(100, Math.round((totalWordsUnchanged / isiDenominator) * 100)))
+      : 100;
+
+  // Build clean visual diff representation for Side-by-Side Slide Viewer
+  const baseDiff = diffWordsWithSpace(cleanWordDoc, detectedBlocks.map((b) => b.text).join('\n\n'));
+  for (const part of baseDiff) {
+    const val = part.value || '';
+    if (!val) continue;
+    if (part.added) {
+      diffParts.push({ type: 'added', value: val });
+      proofreadingParts.push({ type: 'error', value: val, status: 'added_or_modified' });
+      rightParts.push({ type: 'added', value: val, status: 'added_or_modified' });
+    } else if (part.removed) {
+      diffParts.push({ type: 'removed', value: val });
+      proofreadingParts.push({ type: 'removed', value: val, status: 'deleted_from_baseline' });
+      leftParts.push({ type: 'removed', value: val, status: 'deleted_from_baseline' });
+      rightParts.push({ type: 'omitted', value: val, status: 'omitted_in_composite' });
+    } else {
+      diffParts.push({ type: 'unchanged', value: val });
+      proofreadingParts.push({ type: 'match', value: val, status: 'verified_match' });
+      leftParts.push({ type: 'match', value: val, status: 'verified_match' });
+      rightParts.push({ type: 'match', value: val, status: 'verified_match' });
+    }
+  }
+
+  const errorSummary = {
+    capitalization: allProofreadingErrors.filter((e) => e.category === 'Capitalization').length,
+    spacing: allProofreadingErrors.filter((e) => e.category === 'Spacing').length,
+    punctuation: allProofreadingErrors.filter((e) => e.category === 'Punctuation').length,
+    numbers: allProofreadingErrors.filter((e) => e.category === 'Numbers & Units').length,
+    symbols: allProofreadingErrors.filter((e) => e.category === 'Symbols & Trademarks').length,
+    formatting: allProofreadingErrors.filter((e) => e.category === 'Formatting (Bold / Italic)').length,
+    words: allProofreadingErrors.filter((e) => e.category === 'Word Mismatch').length,
+    missingWords: mismatchReport.filter((m) => m.isMissingWord).length,
+    extraWords: mismatchReport.filter((m) => m.isExtraWord).length,
+    total: mismatchReport.length,
+  };
+
+  const isiAudit = {
+    isIsiAudit: true,
+    totalOccurrences: occurrences.length,
+    overallMatchRate: isiComplianceScore,
+    occurrences,
+  };
+
+  return {
+    isIsiComparison: true,
+    similarity: isiComplianceScore,
+    isiComplianceScore,
+    wordsAdded: totalWordsAdded,
+    wordsRemoved: totalWordsRemoved,
+    wordsUnchanged: totalWordsUnchanged,
+    diffParts,
+    proofreadingParts,
+    leftParts,
+    rightParts,
+    sideBySide: {
+      leftParts,
+      rightParts,
+    },
+    proofreadingErrors: allProofreadingErrors,
+    mismatchReport,
+    matchingTokens,
+    isiAudit,
+    isiDetectedBlocks: detectedBlocks,
+    errorSummary,
+  };
+}
+
+/**
  * Audits each detected ISI occurrence in the PDF against the Approved Word Master Document.
- * Calculates match percentage, lists verified approved phrases (Green), and identifies discrepancies (Red).
  */
 export function auditIsiOccurrences(textA, textB) {
-  const blocksB = detectIsiBlocks(textB);
+  const blocksB = detectIsiBlocks(textB, textA);
 
-  // If no structured headings were partitioned, check if safety keywords exist
   if (blocksB.length === 0) {
     if (/safety|indication|contraindication|adverse|prescribing/i.test(textB)) {
       blocksB.push({
@@ -932,11 +1300,12 @@ export function auditIsiOccurrences(textA, textB) {
       matchedPhrasesCount: matchedPhrases.length,
       discrepancyCount: blockErrors.length,
       discrepancies: blockErrors,
-      status: isCompliant
-        ? 'compliant'
-        : blockErrors.some((e) => e.severity === 'critical')
-        ? 'critical_deviations'
-        : 'minor_deviations',
+      status:
+        isCompliant
+          ? 'compliant'
+          : blockErrors.some((e) => e.severity === 'critical')
+          ? 'critical_deviations'
+          : 'minor_deviations',
     });
   }
 
@@ -953,4 +1322,5 @@ export function auditIsiOccurrences(textA, textB) {
     occurrences,
   };
 }
+
 

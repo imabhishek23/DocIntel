@@ -82,6 +82,10 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     docxHtmlB,
     matchingTokens = [],
     isiAudit,
+    mismatchReport = [],
+    isIsiComparison = false,
+    isiComplianceScore,
+    isiDetectedBlocks = [],
   } = result;
 
   const isDocxA = !!(
@@ -121,11 +125,16 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfTotalPages, setPdfTotalPages] = useState(1);
 
-  const [activeTab, setActiveTab] = useState(mode === 'compare' ? 'proofreading' : 'findings');
+  const [activeTab, setActiveTab] = useState(
+    mode === 'compare' ? (mismatchReport.length > 0 || isIsiComparison ? 'mismatchReport' : 'proofreading') : 'findings'
+  );
   const [diffView, setDiffView] = useState('slides'); // 'slides' | 'proofread' | 'inline' | 'slider' | 'images'
   const [highlightTarget, setHighlightTarget] = useState('composite'); // 'composite' | 'both'
   const [severityFilter, setSeverityFilter] = useState('all');
   const [proofCategoryFilter, setProofCategoryFilter] = useState('all');
+  const [mismatchFilter, setMismatchFilter] = useState('all');
+  const [mismatchSearchQuery, setMismatchSearchQuery] = useState('');
+  const [copiedMismatchReport, setCopiedMismatchReport] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [sliderPos, setSliderPos] = useState(50);
 
@@ -327,7 +336,12 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     if (backendDiffParts && backendDiffParts.length > 0) {
       return {
         diffParts: backendDiffParts,
-        similarity: backendSimilarity !== undefined ? backendSimilarity : overallScore,
+        similarity:
+          isIsiComparison && isiComplianceScore !== undefined
+            ? isiComplianceScore
+            : backendSimilarity !== undefined
+            ? backendSimilarity
+            : overallScore,
         wordsAdded: backendWordsAdded || 0,
         wordsRemoved: backendWordsRemoved || 0,
       };
@@ -639,6 +653,66 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
     setTimeout(() => setCopiedSummary(false), 2000);
   };
 
+  const filteredMismatches = useMemo(() => {
+    return (mismatchReport || []).filter((item) => {
+      if (mismatchFilter !== 'all') {
+        if (mismatchFilter === 'Missing Word' && !(item.errorType === 'Missing Word' || item.isMissingWord)) return false;
+        if (mismatchFilter === 'Extra Word' && !(item.errorType === 'Extra Word' || item.isExtraWord)) return false;
+        if (mismatchFilter === 'Spelling / Word Mismatch' && !(item.errorType?.includes('Spelling') || item.errorType === 'Word Mismatch')) return false;
+        if (mismatchFilter === 'Punctuation' && item.errorType !== 'Punctuation') return false;
+        if (mismatchFilter === 'Capitalization' && item.errorType !== 'Capitalization') return false;
+        if (mismatchFilter === 'Formatting (Bold / Italic)' && !item.errorType?.includes('Formatting')) return false;
+        if (mismatchFilter === 'Spacing' && item.errorType !== 'Spacing') return false;
+      }
+      if (mismatchSearchQuery) {
+        const q = mismatchSearchQuery.toLowerCase();
+        const matchFound = (item.pdfText || '').toLowerCase().includes(q);
+        const matchExp = (item.originalWordText || '').toLowerCase().includes(q);
+        const matchSec = (item.section || '').toLowerCase().includes(q);
+        const matchDet = (item.details || '').toLowerCase().includes(q);
+        if (!matchFound && !matchExp && !matchSec && !matchDet) return false;
+      }
+      return true;
+    });
+  }, [mismatchReport, mismatchFilter, mismatchSearchQuery]);
+
+  const handleExportMismatchCsv = () => {
+    if (!mismatchReport || mismatchReport.length === 0) return;
+    const headers = ['#', 'Page', 'Line / Section', 'Error Type', 'Expected Word Text', 'Found PDF Text', 'Details'];
+    const rows = mismatchReport.map((m, i) => [
+      i + 1,
+      m.page || 1,
+      `"${(m.section || '').replace(/"/g, '""')}"`,
+      `"${(m.errorType || '').replace(/"/g, '""')}"`,
+      `"${(m.originalWordText || '').replace(/"/g, '""')}"`,
+      `"${(m.pdfText || '').replace(/"/g, '""')}"`,
+      `"${(m.details || '').replace(/"/g, '""')}"`,
+    ]);
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `isi_mismatch_report_${reviewId || 'audit'}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCopyMismatchTable = () => {
+    if (!mismatchReport || mismatchReport.length === 0) return;
+    const text = [
+      '#\tPage\tSection\tError Type\tExpected in Word\tFound in PDF\tDetails',
+      ...mismatchReport.map(
+        (m, i) =>
+          `${i + 1}\t${m.page || 1}\t${m.section || ''}\t${m.errorType || ''}\t${m.originalWordText || ''}\t${m.pdfText || ''}\t${m.details || ''}`
+      ),
+    ].join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedMismatchReport(true);
+      setTimeout(() => setCopiedMismatchReport(false), 2000);
+    });
+  };
+
   const filteredFindings = findings.filter((f) => {
     if (severityFilter === 'all') return true;
     return f.severity === severityFilter;
@@ -726,33 +800,44 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
         <div className="space-y-6">
           {/* Top 3 Stat Cards + Proofreading Discrepancy Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* 1. Similarity */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm flex flex-col justify-center items-center text-center">
+            {/* 1. Similarity / ISI Compliance */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm flex flex-col justify-center items-center text-center relative overflow-hidden">
+              {isIsiComparison && (
+                <div className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider border border-emerald-300">
+                  <Sparkles className="h-2.5 w-2.5 text-emerald-600" />
+                  ISI Safety Mode
+                </div>
+              )}
               <span className="font-display text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight">
-                {similarity}%
+                {isIsiComparison && isiComplianceScore !== undefined ? isiComplianceScore : similarity}%
               </span>
-              <span className="mt-2 text-xs font-bold uppercase tracking-wider text-slate-400">
-                Similarity
+              <span className="mt-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                {isIsiComparison ? 'ISI Compliance Score' : 'Similarity'}
               </span>
+              {isIsiComparison && (
+                <span className="mt-1 text-[10px] text-slate-500 font-medium">
+                  Word Master Source of Truth (Non-ISI elements ignored)
+                </span>
+              )}
             </div>
 
-            {/* 2. Words Added */}
+            {/* 2. Words Added / Extra ISI Words */}
             <div className="rounded-2xl border border-emerald-100 bg-emerald-50/50 p-6 shadow-sm flex flex-col justify-center items-center text-center">
               <span className="font-display text-4xl sm:text-5xl font-extrabold text-emerald-600 tracking-tight">
                 +{wordsAdded}
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-emerald-700">
-                Words Added
+                {isIsiComparison ? 'Extra Words in ISI' : 'Words Added'}
               </span>
             </div>
 
-            {/* 3. Words Removed */}
+            {/* 3. Words Removed / Missing ISI Words */}
             <div className="rounded-2xl border border-rose-100 bg-rose-50/50 p-6 shadow-sm flex flex-col justify-center items-center text-center">
               <span className="font-display text-4xl sm:text-5xl font-extrabold text-rose-600 tracking-tight">
                 -{wordsRemoved}
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-rose-700">
-                Words Removed
+                {isIsiComparison ? 'Missing Words in ISI' : 'Words Removed'}
               </span>
             </div>
           </div>
@@ -1843,6 +1928,17 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
         {mode === 'compare' && (
           <>
             <button
+              onClick={() => setActiveTab('mismatchReport')}
+              className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
+                activeTab === 'mismatchReport'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <ShieldAlert className="h-4 w-4" />
+              📋 Mismatch Report ({mismatchReport.length})
+            </button>
+            <button
               onClick={() => setActiveTab('proofreading')}
               className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
                 activeTab === 'proofreading'
@@ -1934,6 +2030,193 @@ export default function ResultsDisplay({ result, mode = 'analyze', onReset, onOp
           </button>
         )}
       </div>
+
+      {/* TAB: Detailed ISI Mismatch Report (Requirement 15) */}
+      {activeTab === 'mismatchReport' && mode === 'compare' && (
+        <div className="space-y-4">
+          {/* Header Card */}
+          <div className="rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-950 via-slate-900 to-indigo-950 p-6 text-white shadow-md">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="rounded-md bg-rose-500/30 text-rose-200 border border-rose-400/40 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide">
+                    Requirement 15 Forensic Report
+                  </span>
+                  <span className="rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-0.5 text-xs font-bold">
+                    Source of Truth: Approved Word Document
+                  </span>
+                </div>
+                <h3 className="mt-2 text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
+                  <ShieldAlert className="h-6 w-6 text-rose-400" />
+                  Detailed ISI Mismatch Audit Report
+                </h3>
+                <p className="mt-1 text-xs text-slate-300 max-w-2xl leading-relaxed">
+                  Forensic discrepancy table tracking missing words, extra insertions, spelling, punctuation, capitalization, and formatting. Non-ISI elements (patient profiles, marketing copy) have been excluded from the audit.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={handleExportMismatchCsv}
+                  className="flex items-center gap-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white px-3.5 py-2 text-xs font-bold transition border border-white/20 cursor-pointer"
+                >
+                  <Download className="h-4 w-4 text-rose-300" />
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCopyMismatchTable}
+                  className="flex items-center gap-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white px-3.5 py-2 text-xs font-bold transition shadow-md cursor-pointer"
+                >
+                  {copiedMismatchReport ? <Check className="h-4 w-4 text-emerald-300" /> : <Copy className="h-4 w-4" />}
+                  {copiedMismatchReport ? 'Copied to Clipboard!' : 'Copy Table'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Chips & Search Bar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-xs">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-bold text-slate-500 mr-1">Filter:</span>
+              {[
+                { id: 'all', label: `All Mismatches (${mismatchReport.length})` },
+                { id: 'Missing Word', label: `⚠ Missing Words (${mismatchReport.filter((m) => m.errorType === 'Missing Word' || m.isMissingWord).length})` },
+                { id: 'Extra Word', label: `+ Extra Words (${mismatchReport.filter((m) => m.errorType === 'Extra Word' || m.isExtraWord).length})` },
+                { id: 'Spelling / Word Mismatch', label: `📝 Spelling (${mismatchReport.filter((m) => m.errorType?.includes('Spelling') || m.errorType === 'Word Mismatch').length})` },
+                { id: 'Punctuation', label: `⸲ Punctuation (${mismatchReport.filter((m) => m.errorType === 'Punctuation').length})` },
+                { id: 'Capitalization', label: `🔤 Capitalization (${mismatchReport.filter((m) => m.errorType === 'Capitalization').length})` },
+                { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.includes('Formatting')).length})` },
+                { id: 'Spacing', label: `␣ Spacing (${mismatchReport.filter((m) => m.errorType === 'Spacing').length})` },
+              ].map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setMismatchFilter(f.id)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-bold transition cursor-pointer ${
+                    mismatchFilter === f.id
+                      ? 'bg-rose-700 text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="relative min-w-[220px]">
+              <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search mismatch text..."
+                value={mismatchSearchQuery}
+                onChange={(e) => setMismatchSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500 bg-slate-50/70"
+              />
+            </div>
+          </div>
+
+          {/* Table of Mismatches */}
+          {filteredMismatches.length === 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-12 text-center text-slate-500">
+              <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto mb-2" />
+              <h4 className="text-base font-extrabold text-slate-800">No Mismatches Found</h4>
+              <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                The PDF ISI matches the approved Word Document perfectly under the selected filter.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <table className="w-full text-left text-xs text-slate-700">
+                <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                  <tr>
+                    <th className="py-3 px-3 w-12 text-center">#</th>
+                    <th className="py-3 px-3 w-20">Page</th>
+                    <th className="py-3 px-3 min-w-[140px]">Line / Section</th>
+                    <th className="py-3 px-3 min-w-[130px]">Error Type</th>
+                    <th className="py-3 px-4 min-w-[200px]">Original Word Text (Expected)</th>
+                    <th className="py-3 px-4 min-w-[200px]">PDF Text (Found)</th>
+                    <th className="py-3 px-3 min-w-[180px]">Discrepancy Details</th>
+                    <th className="py-3 px-3 w-24 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-medium">
+                  {filteredMismatches.map((item, idx) => (
+                    <tr key={item.id || idx} className="hover:bg-slate-50/80 transition">
+                      <td className="py-3 px-3 text-center font-bold text-slate-400">
+                        {idx + 1}
+                      </td>
+                      <td className="py-3 px-3">
+                        <span className="inline-flex items-center rounded-md bg-slate-100 text-slate-700 font-mono text-[11px] px-2 py-0.5 font-bold border border-slate-200">
+                          Page {item.page || 1}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 font-semibold text-slate-900 truncate max-w-[160px]" title={item.section}>
+                        {item.section || 'Safety Information'}
+                      </td>
+                      <td className="py-3 px-3">
+                        <span
+                          className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-extrabold border ${
+                            item.errorType === 'Missing Word' || item.isMissingWord
+                              ? 'bg-rose-100 text-rose-800 border-rose-300'
+                              : item.errorType === 'Extra Word' || item.isExtraWord
+                              ? 'bg-amber-100 text-amber-800 border-amber-300'
+                              : item.errorType?.includes('Spelling') || item.errorType === 'Word Mismatch'
+                              ? 'bg-purple-100 text-purple-800 border-purple-300'
+                              : item.errorType === 'Punctuation'
+                              ? 'bg-pink-100 text-pink-800 border-pink-300'
+                              : item.errorType === 'Capitalization'
+                              ? 'bg-blue-100 text-blue-800 border-blue-300'
+                              : item.errorType?.includes('Formatting')
+                              ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                              : 'bg-slate-100 text-slate-800 border-slate-300'
+                          }`}
+                        >
+                          {item.errorType}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="inline-block font-mono text-xs font-bold text-emerald-950 bg-emerald-50 border border-emerald-300 rounded-md px-2 py-1 max-w-[280px] break-words">
+                          {item.originalWordText}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="inline-block font-mono text-xs font-bold text-rose-950 bg-rose-50 border border-rose-300 rounded-md px-2 py-1 max-w-[280px] break-words">
+                          {item.pdfText}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3 text-xs text-slate-600 leading-snug">
+                        {item.details}
+                        {item.beforeWord && (
+                          <span className="block text-[10px] text-slate-400 mt-0.5 font-mono">
+                            Near: "{item.beforeWord}" ... "{item.afterWord}"
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (rightSlideRef.current) {
+                              rightSlideRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                            setSelectedError(item);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2 py-1 text-xs font-bold border border-indigo-200 transition cursor-pointer"
+                        >
+                          <Eye className="h-3 w-3" />
+                          Inspect
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TAB: Proofreading Errors */}
       {activeTab === 'proofreading' && mode === 'compare' && (

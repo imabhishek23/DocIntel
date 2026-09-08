@@ -98,10 +98,51 @@ function computePageHighlights(items, viewport, discrepancies = [], matchingToke
       .trim();
 
     let target = rawFound;
-    if (!target || target === '(deleted)' || target === '(none)') {
+    if (!target || target === '(deleted)' || target === '(none)' || target === '(missing in PDF)') {
       target = rawExpected;
     }
     if (!target) return;
+
+    // ── STRATEGY 0: MISSING WORD INSERTION MARKER (Requirement 7) ──
+    if (err.isMissingWord || err.found === '(missing in PDF)' || err.found === '(deleted)' || err.category === 'Missing Word') {
+      const beforeWordClean = (err.beforeWord || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const afterWordClean = (err.afterWord || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+      let targetItem = null;
+      let isAfter = true;
+      if (beforeWordClean) {
+        targetItem = itemBoxes.find((it) => it.cleanStr.toLowerCase().includes(beforeWordClean));
+        isAfter = true;
+      }
+      if (!targetItem && afterWordClean) {
+        targetItem = itemBoxes.find((it) => it.cleanStr.toLowerCase().includes(afterWordClean));
+        isAfter = false;
+      }
+
+      if (targetItem) {
+        const x = isAfter ? targetItem.x + targetItem.w + 2 : Math.max(0, targetItem.x - 20);
+        const box = {
+          x: Math.round(x),
+          y: Math.round(targetItem.y - 2),
+          w: 24,
+          h: Math.round(Math.max(16, targetItem.h + 4)),
+        };
+        highlights.push({
+          id: err.id || `hl_${errIdx}`,
+          index: errIdx + 1,
+          target: err.expected || target,
+          box,
+          boxes: [box],
+          discrepancy: err,
+          category: 'Missing Word',
+          expected: err.expected,
+          found: '(missing in PDF)',
+          details: err.details || `Missing expected word: "${err.expected}"`,
+          isMissingWord: true,
+        });
+        return;
+      }
+    }
 
     // Remove surrounding quotes
     const cleanTarget = target.replace(/^["']|["']$/g, '').trim();
@@ -187,38 +228,38 @@ function computePageHighlights(items, viewport, discrepancies = [], matchingToke
       return;
     }
 
-    // Strategy 3: Normalized character search (ignoring punctuation & whitespace)
-    // ── STRATEGY 2: MULTI-ITEM PHRASE MATCH (Grouped Line-by-Line!) ──
+    // ── STRATEGY 2: TIGHT MULTI-WORD PHRASE MATCH (Never highlight whole paragraph!) ──
     const targetWords = cleanTarget.split(/\s+/).filter(Boolean);
-    const firstWord = targetWords[0]?.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (targetWords.length >= 2) {
+      const firstWord = targetWords[0]?.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      const maxSpanLength = Math.min(targetWords.length + 2, 6);
 
-    let bestSpan = null;
-    for (let i = 0; i < itemBoxes.length; i++) {
-      const startItem = itemBoxes[i];
-      const startClean = startItem.cleanStr.toLowerCase();
+      let bestSpan = null;
+      for (let i = 0; i < itemBoxes.length; i++) {
+        const startItem = itemBoxes[i];
+        const startClean = startItem.cleanStr.toLowerCase();
 
-      // Anchored strictly to first word of the target phrase
-      if (firstWord && !startClean.includes(firstWord)) {
-        continue;
-      }
-
-      let combined = '';
-      const span = [];
-      for (let j = i; j < Math.min(itemBoxes.length, i + 14); j++) {
-        const it = itemBoxes[j];
-        span.push(it);
-        combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
-
-        const normClean = normTarget.replace(/[^a-z0-9]/g, '');
-        const combinedClean = combined.replace(/[^a-z0-9]/g, '');
-
-        if (combined.includes(normTarget) || (normClean.length > 5 && combinedClean.includes(normClean))) {
-          bestSpan = span.slice();
-          break;
+        if (firstWord && !startClean.includes(firstWord)) {
+          continue;
         }
+
+        let combined = '';
+        const span = [];
+        for (let j = i; j < Math.min(itemBoxes.length, i + maxSpanLength); j++) {
+          const it = itemBoxes[j];
+          span.push(it);
+          combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
+
+          const normClean = normTarget.replace(/[^a-z0-9]/g, '');
+          const combinedClean = combined.replace(/[^a-z0-9]/g, '');
+
+          if (combined.includes(normTarget) || (normClean.length > 5 && combinedClean.includes(normClean))) {
+            bestSpan = span.slice();
+            break;
+          }
+        }
+        if (bestSpan) break;
       }
-      if (bestSpan) break;
-    }
 
     if (bestSpan && bestSpan.length > 0) {
       // Group matched items into distinct lines by raw baseline Y
@@ -273,47 +314,13 @@ function computePageHighlights(items, viewport, discrepancies = [], matchingToke
         return;
       }
     }
-
-    // ── STRATEGY 3: FALLBACK NORMALIZED MATCH ──
-    const normCleanTarget = cleanTarget.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-    if (normCleanTarget.length >= 4) {
-      for (let i = 0; i < itemBoxes.length; i++) {
-        const itA = itemBoxes[i];
-        const itB = itemBoxes[i + 1];
-        const combined = ((itA.cleanStr || '') + (itB ? itB.cleanStr : '')).replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-
-        if (combined.includes(normCleanTarget) || (normCleanTarget.length > 6 && combined.length > 4 && normCleanTarget.includes(combined))) {
-          const minX = itB ? Math.min(itA.x, itB.x) : itA.x;
-          const minY = itB ? Math.min(itA.y, itB.y) : itA.y;
-          const maxX = itB ? Math.max(itA.x + itA.w, itB.x + itB.w) : itA.x + itA.w;
-          const maxY = itB ? Math.max(itA.y + itA.h, itB.y + itB.h) : itA.y + itA.h;
-
-          const box = {
-            x: Math.round(minX - 2),
-            y: Math.round(minY - 2),
-            w: Math.round(maxX - minX + 4),
-            h: Math.round(maxY - minY + 4),
-          };
-
-          highlights.push({
-            id: err.id || `hl_${errIdx}`,
-            index: errIdx + 1,
-            target: cleanTarget,
-            box,
-            boxes: [box],
-            discrepancy: err,
-            category: err.category,
-            expected: err.expected,
-            found: err.found,
-            details: err.details,
-          });
-          return;
-        }
-      }
-    }
+  }
   });
 
   // ── GREEN HIGHLIGHTS: APPROVED MASTER WORD MATCHES ──
+  const NON_ISI_TEXT_REGEX =
+    /^(?:Arthur|Diabetes|Patient\s+(?:Profile|Snapshot|History)|living\s+with\s+diabetes|\d+\s+years\s+old|Clinical\s+Efficacy|Study\s+Design|See\s+Examples|Practice|Sign\s+Up|Visit|Click\s+Here|Observational\s+studies|Inform\s+your\s+patients)/i;
+
   if (matchingTokens && matchingTokens.length > 0) {
     matchingTokens.forEach((token, tIdx) => {
       const targetStr = (token.text || '').trim();
@@ -322,10 +329,14 @@ function computePageHighlights(items, viewport, discrepancies = [], matchingToke
       const normTarget = targetStr.replace(/\s+/g, ' ').toLowerCase();
 
       for (let i = 0; i < itemBoxes.length; i++) {
+        // Skip non-ISI promotional elements
+        if (NON_ISI_TEXT_REGEX.test(itemBoxes[i].cleanStr)) continue;
+
         let combined = '';
         const span = [];
         for (let j = i; j < Math.min(itemBoxes.length, i + 6); j++) {
           const it = itemBoxes[j];
+          if (NON_ISI_TEXT_REGEX.test(it.cleanStr)) break;
           span.push(it);
           combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
 
@@ -1000,6 +1011,8 @@ export default function PdfVisualViewer({
                                   ? 'border-2 border-red-600 bg-red-500/35 ring-4 ring-red-400/60 z-30 shadow-[0_0_16px_rgba(239,68,68,0.7)]'
                                   : isMatch
                                   ? 'border-2 border-emerald-500 bg-emerald-500/20 hover:bg-emerald-500/35 hover:border-emerald-600 z-10 shadow-[0_0_8px_rgba(16,185,129,0.35)]'
+                                  : hl.isMissingWord
+                                  ? 'border-2 border-dashed border-red-600 bg-red-500/35 ring-2 ring-red-400/50 z-25 shadow-[0_0_12px_rgba(239,68,68,0.6)]'
                                   : hl.isColorDiff
                                   ? 'border-2 border-amber-500 bg-amber-500/25 hover:bg-amber-500/40 hover:border-amber-600 z-15 shadow-[0_0_8px_rgba(245,158,11,0.5)]'
                                   : 'border-2 border-rose-500 bg-rose-500/20 hover:bg-rose-500/35 hover:border-rose-600 z-10 shadow-[0_0_8px_rgba(244,63,94,0.4)]'
@@ -1009,7 +1022,9 @@ export default function PdfVisualViewer({
                                 setSelectedError(isSelected ? null : (hl.discrepancy || hl));
                               }}
                               title={
-                                isMatch
+                                hl.isMissingWord
+                                  ? `⚠ Missing in PDF: "${hl.target}" (Expected from Word master)`
+                                  : isMatch
                                   ? `✓ Approved Word Match: "${hl.target}"`
                                   : `#${hl.index} ${hl.category}: ${hl.details}`
                               }
@@ -1017,15 +1032,17 @@ export default function PdfVisualViewer({
                               {/* Static Badge on the FIRST line box */}
                               {bIdx === 0 && (
                                 <span
-                                  className={`absolute -top-3 -left-2.5 flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full text-white text-[10px] font-black shadow-md border border-white ${
-                                    isMatch
+                                  className={`absolute -top-3.5 -left-2 flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full text-white text-[9px] font-black shadow-md border border-white whitespace-nowrap ${
+                                    hl.isMissingWord
+                                      ? 'bg-red-700 ring-2 ring-red-300'
+                                      : isMatch
                                       ? 'bg-emerald-600'
                                       : hl.isColorDiff
                                       ? 'bg-amber-600'
                                       : 'bg-red-600'
                                   }`}
                                 >
-                                  {isMatch ? '✓' : hl.index}
+                                  {hl.isMissingWord ? `^ Missing: "${hl.target}"` : isMatch ? '✓' : hl.index}
                                 </span>
                               )}
 
