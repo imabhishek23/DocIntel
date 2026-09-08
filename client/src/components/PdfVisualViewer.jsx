@@ -152,6 +152,8 @@ function computePageHighlights(
 
       let bestIdx = -1;
       let bestScore = 0;
+      let matchedLine = null;
+      let matchedIdx = -1;
 
       for (let pIdx = 0; pIdx < pageLines.length; pIdx++) {
         if (usedIndices.has(pIdx)) continue;
@@ -767,19 +769,13 @@ export default function PdfVisualViewer({
           uint8 = await extractUint8(fallbackSource);
         }
 
-        const cMapOptions = {
-          cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
-          cMapPacked: true,
-          standardFontDataUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/',
-        };
-
         let loadingTask;
         if (uint8) {
-          loadingTask = pdfjsLib.getDocument({ data: uint8, ...cMapOptions });
+          loadingTask = pdfjsLib.getDocument({ data: uint8 });
         } else if (typeof primarySource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: primarySource, ...cMapOptions });
+          loadingTask = pdfjsLib.getDocument({ url: primarySource });
         } else if (typeof fallbackSource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: fallbackSource, ...cMapOptions });
+          loadingTask = pdfjsLib.getDocument({ url: fallbackSource });
         } else {
           if (imageSrc) {
             setPdfDoc(null);
@@ -791,13 +787,7 @@ export default function PdfVisualViewer({
           return;
         }
 
-        // 4s timeout race so PDF loading never hangs indefinitely
-        const doc = await Promise.race([
-          loadingTask.promise,
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('PDF load timed out')), 4000)
-          ),
-        ]);
+        const doc = await loadingTask.promise;
 
         if (isCancelled) return;
 
