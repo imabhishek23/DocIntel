@@ -150,21 +150,37 @@ function computePageHighlights(
       const lrClean = (lr.text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!lrClean && lr.text !== '•' && lr.text !== '-' && lr.text !== '*') continue;
 
-      let matchedLine = null;
-      let matchedIdx = -1;
+      let bestIdx = -1;
+      let bestScore = 0;
 
       for (let pIdx = 0; pIdx < pageLines.length; pIdx++) {
         if (usedIndices.has(pIdx)) continue;
         const pl = pageLines[pIdx];
 
-        if (
-          (lrClean.length >= 4 && (pl.clean.includes(lrClean) || lrClean.includes(pl.clean))) ||
-          (lrClean.length < 4 && (pl.text === lr.text || pl.clean === lrClean))
-        ) {
-          matchedLine = pl;
-          matchedIdx = pIdx;
+        if (pl.clean === lrClean) {
+          bestIdx = pIdx;
+          bestScore = 1;
           break;
         }
+
+        const minLen = Math.min(pl.clean.length, lrClean.length);
+        const maxLen = Math.max(pl.clean.length, lrClean.length);
+        const lenRatio = maxLen > 0 ? minLen / maxLen : 0;
+
+        if (
+          ((pl.clean.includes(lrClean) || lrClean.includes(pl.clean)) && lenRatio >= 0.55) ||
+          (lrClean.length < 4 && (pl.text === lr.text || pl.clean === lrClean))
+        ) {
+          if (lenRatio > bestScore) {
+            bestScore = lenRatio;
+            bestIdx = pIdx;
+          }
+        }
+      }
+
+      if (bestIdx >= 0) {
+        matchedLine = pageLines[bestIdx];
+        matchedIdx = bestIdx;
       }
 
       if (matchedLine) {
@@ -751,13 +767,19 @@ export default function PdfVisualViewer({
           uint8 = await extractUint8(fallbackSource);
         }
 
+        const cMapOptions = {
+          cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+          cMapPacked: true,
+          standardFontDataUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/',
+        };
+
         let loadingTask;
         if (uint8) {
-          loadingTask = pdfjsLib.getDocument({ data: uint8 });
+          loadingTask = pdfjsLib.getDocument({ data: uint8, ...cMapOptions });
         } else if (typeof primarySource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: primarySource });
+          loadingTask = pdfjsLib.getDocument({ url: primarySource, ...cMapOptions });
         } else if (typeof fallbackSource === 'string') {
-          loadingTask = pdfjsLib.getDocument({ url: fallbackSource });
+          loadingTask = pdfjsLib.getDocument({ url: fallbackSource, ...cMapOptions });
         } else {
           if (imageSrc) {
             setPdfDoc(null);
@@ -1130,7 +1152,7 @@ export default function PdfVisualViewer({
 
         {/* Content Container: Canvas with In-Place Bounding Box Overlay */}
         <div className="flex justify-center items-start min-h-full py-2">
-          {isImageMode || (!pdfDoc && imageSrc) ? (
+          {isImageMode ? (
             <img
               src={imageSrc || (file ? URL.createObjectURL(file) : '')}
               alt={title}

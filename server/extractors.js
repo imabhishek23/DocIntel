@@ -52,7 +52,7 @@ export async function extractDocumentText(filename, buffer) {
           .replace(/<br\s*\/?>/gi, '\n')
           .replace(/<li\b[^>]*>/gi, '• ')
           .replace(/<\/(?:p|h[1-6]|div|tr|li|blockquote)>/gi, '\n\n')
-          .replace(/<[^>]+>/g, '')
+          .replace(/<(?!\/?(?:b|i)\b)[^>]+>/g, '')
           .replace(/&amp;/g, '&')
           .replace(/&lt;/g, '<')
           .replace(/&gt;/g, '>')
@@ -124,8 +124,8 @@ function assembleLineItems(lineItems) {
       const prevEnd = prev.x + (prev.width || 0);
       const gap = cur.x - prevEnd;
 
-      // If there is a visible gap (> 2 pt) and neither previous ended with space nor current starts with space
-      if (gap > 2 && !prev.str.endsWith(' ') && !cur.str.startsWith(' ')) {
+      // If gap is significant (> 1 pt) and neither previous ended with space nor current starts with space
+      if (gap > 1 && !prev.str.endsWith(' ') && !cur.str.startsWith(' ')) {
         lineStr += ' ';
       }
     }
@@ -148,6 +148,7 @@ function assembleLineItems(lineItems) {
   return lineStr
     .replace(/<\/b>(\s*)<b>/g, '$1')
     .replace(/<\/i>(\s*)<i>/g, '$1')
+    .replace(/<\/i><\/b>(\s*)<b><i>/g, '$1')
     .replace(/[ \t]+/g, ' ')
     .trim();
 }
@@ -164,7 +165,13 @@ async function extractPdfText(buffer) {
   // Attempt 1: Advanced layout and styling extraction with pdfjs-dist
   try {
     const uint8 = new Uint8Array(buffer);
-    const doc = await pdfjs.getDocument({ data: uint8, verbosity: 0 }).promise;
+    const doc = await pdfjs.getDocument({
+      data: uint8,
+      verbosity: 0,
+      cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/standard_fonts/',
+    }).promise;
 
     for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
       const page = await doc.getPage(pageNum);
@@ -175,20 +182,11 @@ async function extractPdfText(buffer) {
 
       if (!items || items.length === 0) continue;
 
-      const pageLines = [];
-      let currentLine = [];
-      let currentBaselineY = null;
-      let prevBaselineY = null;
-      let avgItemHeight = 12;
-
+      // 1. Gather all non-empty text items with font styling
+      const itemObjects = [];
       for (const item of items) {
         if (!item.str && item.str !== ' ') continue;
-        const y = item.transform[5];
-        const height = item.height || 12;
-        avgItemHeight = height;
-        const threshold = item.height ? Math.max(7, item.height * 0.7) : 7;
 
-        // Extract bold & italic font styling from page.commonObjs
         let isBold = false;
         let isItalic = false;
         if (item.fontName && page.commonObjs.has(item.fontName)) {
@@ -198,20 +196,48 @@ async function extractPdfText(buffer) {
             isItalic = !!font.italic || (typeof font.name === 'string' && /italic|oblique/i.test(font.name));
           }
         }
+        if (item.fontName) {
+          if (/bold/i.test(item.fontName)) isBold = true;
+          if (/italic|oblique/i.test(item.fontName)) isItalic = true;
+        }
 
-        const itemData = {
+        itemObjects.push({
           str: item.str,
           x: item.transform[4],
+          y: item.transform[5],
           width: item.width || 0,
+          height: item.height || 10,
           isBold,
           isItalic,
-        };
+        });
+      }
+
+      // 2. Sort items spatially: Y descending (top of page first), X ascending (left to right)
+      // Items within 4pt vertically are on the same line
+      itemObjects.sort((a, b) => {
+        if (Math.abs(a.y - b.y) <= 4) {
+          return a.x - b.x;
+        }
+        return b.y - a.y;
+      });
+
+      // 3. Cluster items into visual lines
+      const pageLines = [];
+      let currentLine = [];
+      let currentBaselineY = null;
+      let prevBaselineY = null;
+      let avgItemHeight = 12;
+
+      for (const item of itemObjects) {
+        const y = item.y;
+        const height = item.height || 12;
+        avgItemHeight = height;
+        const threshold = Math.max(4, Math.min(6, height * 0.5));
 
         if (currentBaselineY === null || Math.abs(y - currentBaselineY) > threshold) {
           if (currentLine.length > 0) {
             const assembled = assembleLineItems(currentLine);
             if (assembled) {
-              // Check vertical gap to determine if this is a paragraph break
               if (prevBaselineY !== null) {
                 const deltaY = Math.abs(prevBaselineY - currentBaselineY);
                 if (deltaY > Math.max(18, avgItemHeight * 1.5)) {
@@ -222,10 +248,10 @@ async function extractPdfText(buffer) {
               prevBaselineY = currentBaselineY;
             }
           }
-          currentLine = [itemData];
+          currentLine = [item];
           currentBaselineY = y;
         } else {
-          currentLine.push(itemData);
+          currentLine.push(item);
         }
       }
 

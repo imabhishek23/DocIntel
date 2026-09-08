@@ -1012,6 +1012,61 @@ export function detectIsiBlocks(text, referenceMasterText = '') {
  * 4. Highlights matching words in Green, mismatches/missing/extra in Red.
  * 5. Generates detailed Mismatch Report (Req 15) and calculates ISI Compliance Score (Req 13).
  */
+function levenshteinDist(a, b) {
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1];
+      } else {
+        dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+      }
+    }
+  }
+  return dp[m][n];
+}
+
+function extractStyledTokensHelper(text) {
+  const tokens = [];
+  let isBold = false;
+  let isItalic = false;
+
+  const parts = (text || '').split(/(<\/?[bi]>)/gi);
+
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (lower === '<b>') {
+      isBold = true;
+    } else if (lower === '</b>') {
+      isBold = false;
+    } else if (lower === '<i>') {
+      isItalic = true;
+    } else if (lower === '</i>') {
+      isItalic = false;
+    } else if (part) {
+      const words = part.match(/\S+/g);
+      if (words) {
+        for (const w of words) {
+          const isSymbolOnly = /^[^a-zA-Z0-9]+$/.test(w);
+          tokens.push({
+            raw: w,
+            clean: w.replace(/^[.,;:!?'"–—\-()\[\]]+|[.,;:!?'"–—\-()\[\]]+$/g, ''),
+            norm: w.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, ''),
+            isBold,
+            isItalic,
+            isSymbolOnly,
+          });
+        }
+      }
+    }
+  }
+  return tokens;
+}
+
 /**
  * Extracts canonical statements from Approved ISI Reference Document (Word or PDF).
  */
@@ -1019,17 +1074,17 @@ export function extractCanonicalStatements(textA) {
   const rawLines = (textA || '')
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !/^(?:For editorial QA|Page \d+ of \d+)/i.test(l));
+    .filter((l) => l.length > 0 && !/^(?:For editorial QA|Page \d+ of \d+|IMMUNOVA \|)/i.test(l));
 
   const statements = [];
   let current = '';
 
-  for (const l of rawLines) {
-    const clean = (l || '').replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
+  for (const rawLine of rawLines) {
+    const clean = rawLine.replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
     if (!clean) continue;
 
     const isHeading =
-      /^(?:IMMUNOVA\s*\||Prescribing Information|Indication|Important Safety Information(?:\s*\(cont[’']?d\))?|References|Contraindications|Warnings\s*(?:and|&)\s*Precautions|Adverse Reactions)/i.test(
+      /^(?:Prescribing Information|Indication|Important Safety Information(?:\s*\(cont[’']?d\))?|References|Contraindications|Warnings\s*(?:and|&)\s*Precautions|Adverse Reactions)/i.test(
         clean
       );
     const isBullet = /^[•\-\*]/.test(clean);
@@ -1038,9 +1093,9 @@ export function extractCanonicalStatements(textA) {
 
     if (isHeading || isBullet || isNumber || isPleaseSee) {
       if (current) statements.push(current.trim());
-      current = clean;
+      current = rawLine;
     } else {
-      current += (current ? ' ' : '') + clean;
+      current += (current ? ' ' : '') + rawLine;
     }
   }
   if (current) statements.push(current.trim());
@@ -1048,10 +1103,10 @@ export function extractCanonicalStatements(textA) {
 }
 
 const COMPOSITE_NON_ISI_LINE_REGEX =
-  /^(?:Subject:|Preheader:|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|EXPLORE\s+MORE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor)/i;
+  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|EXPLORE\s+MORE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor)/i;
 
 const COMPOSITE_ISI_START_REGEX =
-  /^(?:Prescribing Information|Indication|Important Safety Information|Selected Important Safety Information|Important Safety Information \(cont[’']?d\)|References)$/i;
+  /^(?:<b>\s*)?(?:Prescribing Information|Indication|Important Safety Information|Selected Important Safety Information|Important Safety Information \(cont[’']?d\)|References)/i;
 
 /**
  * Extracts visual ISI lines from Composite PDF B.
@@ -1071,28 +1126,16 @@ export function extractIsiLinesFromPdf(textB) {
       continue;
     }
 
-    if (COMPOSITE_ISI_START_REGEX.test(clean)) {
+    if (COMPOSITE_ISI_START_REGEX.test(raw) || COMPOSITE_ISI_START_REGEX.test(clean)) {
       inIsi = true;
     }
 
     if (inIsi) {
-      if (
-        /^Guillain-Barré syndrome$/i.test(clean) ||
-        /^gastro intestinal$/i.test(clean) ||
-        /^pregnent women\.?$/i.test(clean) ||
-        /^Vaccination may not result/i.test(clean) ||
-        /^Prescribing Information\.?$/i.test(clean)
-      ) {
-        const hasSeenReferences = isiLines.some((l) => /^References$/i.test(l.clean));
-        if (hasSeenReferences) {
-          continue;
-        }
-      }
-
       isiLines.push({
         raw,
         clean,
         index: i,
+        tokens: extractStyledTokensHelper(raw),
       });
 
       if (/is not approved promotional material\.?$/i.test(clean) || /For editorial QA training only/i.test(clean)) {
@@ -1108,16 +1151,16 @@ function normalizeTokenStr(w) {
 }
 
 /**
- * Performs strict ISI Line-by-Line comparison fulfilling all 11 user requirements:
+ * Performs strict ISI Line-by-Line comparison fulfilling all user requirements:
  * 1. Compare ISI line by line in sequence.
  * 2. Never scavenge words across lines or locations.
  * 3. Each reference line compared only to its corresponding ISI line in PDF B.
  * 4. Line marked matched only when complete line matches.
  * 5. Complete line match -> highlighted Green.
- * 6 & 7. Any difference -> highlighted Red (missing word, extra word, spelling, spacing, punctuation, case, format).
- * 8. Every red line includes explicit comment explaining what is wrong.
- * 9 & 10. Missing lines marked with "Missing line/sentence" and extra lines with "Extra line".
- * 11. Ignore non-ISI content (promotional copy, Arthur, diabetes, banners, logos, footers).
+ * 6. Any difference -> highlighted Red (missing word, extra word, spelling, spacing, punctuation, case, format/italic/bold, symbols).
+ * 7. Every red line includes explicit comment explaining what is wrong.
+ * 8. Missing lines marked with "Missing line/sentence" and extra lines with "Extra line".
+ * 9. Ignore non-ISI content (promotional copy, Arthur, diabetes, banners, logos, footers).
  */
 export function compareIsiLineByLine(textA, textB, options = {}) {
   const statementsA = extractCanonicalStatements(textA);
@@ -1128,18 +1171,16 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     return compareTargetedIsiFallback(textA, textB);
   }
 
-  // Flatten canonical statements into indexed tokens
+  // Flatten canonical statements into indexed tokens with styling
   const canonicalTokens = [];
   for (let sIdx = 0; sIdx < statementsA.length; sIdx++) {
     const stmt = statementsA[sIdx];
-    const words = stmt.split(/\s+/).filter(Boolean);
-    for (let wIdx = 0; wIdx < words.length; wIdx++) {
-      const raw = words[wIdx];
+    const stmtTokens = extractStyledTokensHelper(stmt);
+    for (let tIdx = 0; tIdx < stmtTokens.length; tIdx++) {
       canonicalTokens.push({
         stmtIndex: sIdx,
-        tokenIndex: wIdx,
-        raw,
-        clean: normalizeTokenStr(raw),
+        tokenIndex: tIdx,
+        ...stmtTokens[tIdx],
       });
     }
   }
@@ -1152,14 +1193,17 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
   let tokenIdx = 1;
 
   for (let lIdx = 0; lIdx < linesB.length; lIdx++) {
-    const line = linesB[lIdx];
-    const cleanLine = typeof line === 'string' ? line : (line.clean || line.cleanLine || '');
+    const lineObj = linesB[lIdx];
+    const cleanLine = typeof lineObj === 'string' ? lineObj : (lineObj.clean || '');
+    const bTokens = lineObj.tokens || extractStyledTokensHelper(lineObj.raw || cleanLine);
+    const bNorm = bTokens.map((t) => t.norm);
 
     // Case 1: Bullet-only line with missing text
     if (cleanLine === '•' || cleanLine === '-' || cleanLine === '*') {
       const nextStmtIdx = canonicalTokens[cCursor]?.stmtIndex ?? -1;
       const missingStmt = nextStmtIdx >= 0 ? statementsA[nextStmtIdx] : '';
-      const comment = `Missing sentence: "${missingStmt.replace(/^[•\-\*]\s*/, '')}"`;
+      const cleanMissing = missingStmt.replace(/<\/?[bi]\b[^>]*>/gi, '').replace(/^[•\-\*]\s*/, '');
+      const comment = `Missing sentence: "${cleanMissing}"`;
 
       isiLineResults.push({
         lineIndex: lIdx + 1,
@@ -1168,7 +1212,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         color: 'red',
         status: 'mismatched',
         comment,
-        expected: missingStmt,
+        expected: cleanMissing,
         found: cleanLine,
         section: 'Important Safety Information',
       });
@@ -1178,7 +1222,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         id: `line_err_${lIdx + 1}`,
         page: 1,
         section: 'Important Safety Information',
-        originalWordText: missingStmt,
+        originalWordText: cleanMissing,
         pdfText: cleanLine,
         errorType: 'Missing Sentence',
         severity: 'critical',
@@ -1190,7 +1234,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         id: `err_line_${lIdx + 1}`,
         category: 'Missing Word',
         severity: 'critical',
-        expected: missingStmt,
+        expected: cleanMissing,
         found: cleanLine,
         details: comment,
       });
@@ -1201,21 +1245,22 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       continue;
     }
 
-    const lineWords = cleanLine.split(/\s+/).filter(Boolean);
-    const lineNorm = lineWords.map(normalizeTokenStr);
-
-    // Find best match in canonical tokens
+    // Find best match in canonical tokens starting from cCursor
     let bestStart = -1;
     let bestScore = 0;
 
     for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 60); searchPos++) {
       let matchCount = 0;
-      for (let k = 0; k < Math.min(lineNorm.length, 6); k++) {
-        if (searchPos + k < canonicalTokens.length && canonicalTokens[searchPos + k].clean === lineNorm[k]) {
-          matchCount++;
+      const compareLen = Math.min(bNorm.length, 6);
+      for (let k = 0; k < compareLen; k++) {
+        if (searchPos + k < canonicalTokens.length) {
+          const cTok = canonicalTokens[searchPos + k];
+          if (cTok.norm === bNorm[k] || (cTok.norm && bNorm[k] && (cTok.norm.includes(bNorm[k]) || bNorm[k].includes(cTok.norm)))) {
+            matchCount++;
+          }
         }
       }
-      const score = matchCount / Math.min(lineNorm.length, 6);
+      const score = matchCount / compareLen;
       if (score > bestScore && score >= 0.5) {
         bestScore = score;
         bestStart = searchPos;
@@ -1281,48 +1326,107 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     const issues = [];
     let tokenCursor = bestStart;
 
-    for (let w = 0; w < lineWords.length; w++) {
-      const lw = lineWords[w];
-      const lClean = lineNorm[w];
+    let bIdx = 0;
+    while (bIdx < bTokens.length) {
+      const bt = bTokens[bIdx];
+      if (tokenCursor >= canonicalTokens.length) {
+        issues.push(`Extra word: "${bt.raw}"`);
+        bIdx++;
+        continue;
+      }
 
-      if (tokenCursor < canonicalTokens.length) {
-        const ct = canonicalTokens[tokenCursor];
-        if (ct.clean === lClean) {
-          if (ct.raw !== lw) {
-            if (w === 0 && (lw === '•' || lw === '-' || lw === '*')) {
-              // bullet matches
-            } else if (ct.raw.toLowerCase() === lw.toLowerCase()) {
-              issues.push(`Capitalization difference: found "${lw}", expected "${ct.raw}"`);
-            } else if (ct.raw.replace(/[.,;:!?'"–—\-()\[\]]/g, '') === lw.replace(/[.,;:!?'"–—\-()\[\]]/g, '')) {
-              issues.push(`Punctuation difference: found "${lw}", expected "${ct.raw}"`);
-            }
-          }
-          tokenCursor++;
-        } else {
-          // Check ahead for omission
-          let foundAhead = -1;
-          for (let look = 1; look <= 4; look++) {
-            if (tokenCursor + look < canonicalTokens.length && canonicalTokens[tokenCursor + look].clean === lClean) {
-              foundAhead = look;
-              break;
-            }
-          }
+      const ct = canonicalTokens[tokenCursor];
 
-          if (foundAhead > 0) {
-            const omitted = canonicalTokens.slice(tokenCursor, tokenCursor + foundAhead).map((t) => t.raw).join(' ');
-            issues.push(`Missing word(s): "${omitted}"`);
-            tokenCursor += foundAhead + 1;
-          } else {
-            issues.push(`Extra or altered word: found "${lw}", expected "${ct.raw}"`);
-            tokenCursor++;
+      // 1. Direct norm match
+      if (ct.norm === bt.norm) {
+        // Check font styling (italic, bold)
+        if (bt.isItalic !== ct.isItalic) {
+          issues.push(
+            `Font style mismatch: found ${bt.isItalic ? 'italic' : 'regular'} "${bt.raw}", expected ${ct.isItalic ? 'italic' : 'regular'} text`
+          );
+        }
+        if (bt.isBold !== ct.isBold) {
+          issues.push(
+            `Font style mismatch: found ${bt.isBold ? 'bold' : 'regular'} "${bt.raw}", expected ${ct.isBold ? 'bold' : 'regular'} text`
+          );
+        }
+
+        // Check capitalization / case
+        if (bt.raw !== ct.raw) {
+          if (bIdx === 0 && (bt.raw === '•' || bt.raw === '-' || bt.raw === '*')) {
+            // Bullet matches
+          } else if (bt.raw.toLowerCase() === ct.raw.toLowerCase()) {
+            issues.push(`Capitalization difference: found "${bt.raw}", expected "${ct.raw}"`);
+          } else if (bt.clean.toLowerCase() === ct.clean.toLowerCase()) {
+            issues.push(`Punctuation difference: found "${bt.raw}", expected "${ct.raw}"`);
           }
         }
+
+        bIdx++;
+        tokenCursor++;
+        continue;
       }
+
+      // 2. Extra space inside a word: e.g. "gastro intestinal" vs "gastrointestinal"
+      if (bIdx + 1 < bTokens.length) {
+        const mergedTwo = bt.norm + bTokens[bIdx + 1].norm;
+        if (mergedTwo === ct.norm) {
+          issues.push(
+            `Spacing discrepancy: found extra space in "${bt.raw} ${bTokens[bIdx + 1].raw}", expected "${ct.raw}"`
+          );
+          bIdx += 2;
+          tokenCursor++;
+          continue;
+        }
+      }
+
+      // 3. Missing space between words: e.g. "training-layout" vs "training-" + "layout"
+      if (tokenCursor + 1 < canonicalTokens.length) {
+        const mergedA = ct.norm + canonicalTokens[tokenCursor + 1].norm;
+        if (bt.norm === mergedA || bt.norm.replace(/[-–—]/g, '') === mergedA.replace(/[-–—]/g, '')) {
+          issues.push(
+            `Spacing discrepancy: missing space in "${bt.raw}", expected "${ct.raw} ${canonicalTokens[tokenCursor + 1].raw}"`
+          );
+          bIdx++;
+          tokenCursor += 2;
+          continue;
+        }
+      }
+
+      // 4. Spelling typo check (Levenshtein edit distance <= 2)
+      if (ct.norm && bt.norm && levenshteinDist(ct.norm, bt.norm) <= 2) {
+        issues.push(`Spelling discrepancy: found "${bt.raw}", expected "${ct.raw}"`);
+        bIdx++;
+        tokenCursor++;
+        continue;
+      }
+
+      // 5. Lookahead for omission (missing word in B)
+      let foundAhead = -1;
+      for (let look = 1; look <= 4; look++) {
+        if (tokenCursor + look < canonicalTokens.length && canonicalTokens[tokenCursor + look].norm === bt.norm) {
+          foundAhead = look;
+          break;
+        }
+      }
+
+      if (foundAhead > 0) {
+        const omitted = canonicalTokens.slice(tokenCursor, tokenCursor + foundAhead).map((t) => t.raw).join(' ');
+        issues.push(`Missing word(s): "${omitted}"`);
+        tokenCursor += foundAhead;
+        // Don't advance bIdx so current bt can match the lookahead ct
+        continue;
+      }
+
+      // 6. Word replacement or extra word
+      issues.push(`Word discrepancy: found "${bt.raw}", expected "${ct.raw}"`);
+      bIdx++;
+      tokenCursor++;
     }
 
     cCursor = tokenCursor;
 
-    // Check end-of-statement truncation
+    // Check end-of-statement truncation if next line is bullet or heading
     if (lIdx < linesB.length - 1) {
       const nextLineText = linesB[lIdx + 1]?.clean || '';
       const nextIsBulletOrHeading = /^[•\-\*]|^(?:References|Important Safety|Prescribing)/i.test(nextLineText);
@@ -1341,7 +1445,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       }
     }
 
-    const targetStmt = statementsA[canonicalTokens[bestStart]?.stmtIndex] || '';
+    const targetStmtRaw = statementsA[canonicalTokens[bestStart]?.stmtIndex] || '';
+    const targetStmt = targetStmtRaw.replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
 
     if (issues.length === 0) {
       isiLineResults.push({
@@ -1356,6 +1461,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         section: targetStmt.slice(0, 30) || 'ISI Section',
       });
 
+      const lineWords = cleanLine.split(/\s+/).filter(Boolean);
       for (let i = 0; i < lineWords.length; i += 4) {
         const chunk = lineWords.slice(i, i + 4).join(' ');
         if (chunk.length >= 3) {
@@ -1382,6 +1488,15 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         section: targetStmt.slice(0, 30) || 'ISI Section',
       });
 
+      const primaryIssue = issues[0] || 'Line Discrepancy';
+      let category = 'Word Mismatch';
+      if (primaryIssue.includes('Font style')) category = 'Formatting (Bold / Italic)';
+      else if (primaryIssue.includes('Spacing')) category = 'Spacing';
+      else if (primaryIssue.includes('Spelling')) category = 'Spelling';
+      else if (primaryIssue.includes('Capitalization')) category = 'Capitalization';
+      else if (primaryIssue.includes('Punctuation')) category = 'Punctuation';
+      else if (primaryIssue.includes('Missing')) category = 'Missing Word';
+
       mismatchReport.push({
         index: mismatchReport.length + 1,
         id: `line_err_${lIdx + 1}`,
@@ -1389,14 +1504,15 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         section: 'Important Safety Information',
         originalWordText: targetStmt,
         pdfText: cleanLine,
-        errorType: issues[0]?.split(':')[0] || 'Line Discrepancy',
+        errorType: primaryIssue.split(':')[0] || 'Line Discrepancy',
         severity: 'high',
         details: comment,
+        isMissingWord: primaryIssue.includes('Missing'),
       });
 
       proofreadingErrors.push({
         id: `err_line_${lIdx + 1}`,
-        category: issues[0]?.includes('Missing') ? 'Missing Word' : 'Word Mismatch',
+        category,
         severity: 'high',
         expected: targetStmt,
         found: cleanLine,
