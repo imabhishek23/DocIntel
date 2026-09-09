@@ -134,6 +134,7 @@ function computePageHighlights(
         rawY,
         text,
         clean: text.toLowerCase().replace(/[^a-z0-9]/g, ''),
+        lineItems: sorted,
         box: {
           x: Math.round(minX - 1),
           y: Math.round(minY),
@@ -187,43 +188,147 @@ function computePageHighlights(
 
       if (matchedLine) {
         usedIndices.add(matchedIdx);
-        const isMatch = lr.color === 'green';
+        const isMatch = lr.color === 'green' && (!lr.wordErrors || lr.wordErrors.length === 0);
+        const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
 
+        // 1. Overall Line Highlight (Rendered in Green as the line structure is verified)
         highlights.push({
           id: `isi_line_${lr.lineNum || lr.lineIndex}`,
           index: lr.lineNum || lr.lineIndex,
           target: lr.text,
           box: matchedLine.box,
           boxes: [matchedLine.box],
-          isMatch,
-          isError: !isMatch,
-          color: lr.color,
+          isMatch: true,
+          isError: !isMatch && !hasWordErrors,
+          color: isMatch || hasWordErrors ? 'green' : 'red',
           category: isMatch
             ? 'Complete Line Match'
+            : hasWordErrors
+            ? 'Line Structure Verified (Word Corrections Marked in Red)'
             : lr.status === 'extra_line'
             ? 'Extra Line'
-            : (lr.comment || '').includes('Missing line') || lr.status === 'missing_line'
-            ? 'Missing Line'
-            : (lr.comment || '').includes('Missing word')
-            ? 'Missing Word'
-            : (lr.comment || '').includes('Spacing')
-            ? 'Spacing Difference'
-            : (lr.comment || '').includes('Spelling')
-            ? 'Spelling Mistake'
-            : (lr.comment || '').includes('Capitalization')
-            ? 'Capitalization Difference'
-            : (lr.comment || '').includes('Punctuation')
-            ? 'Punctuation Difference'
-            : (lr.comment || '').includes('Bold') || (lr.comment || '').includes('Italic')
-            ? 'Bold / Italic Formatting'
             : 'Line Discrepancy',
-          details: lr.comment || (isMatch ? 'Complete line match' : 'Line discrepancy detected'),
+          details: isMatch
+            ? '✓ Verified Line Match'
+            : hasWordErrors
+            ? `Line structure matches approved reference (${lr.wordErrors.length} specific word correction marked in red)`
+            : lr.comment,
           comment: lr.comment,
           expected: lr.expected || lr.text,
           found: lr.found || lr.text,
-          isLineDiscrepancy: !isMatch,
+          isLineDiscrepancy: !isMatch && !hasWordErrors,
           isMissingLine: !isMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
         });
+
+        // 2. Word-Level Red Highlights (User Requirement: "mark the word only in red")
+        if (hasWordErrors && matchedLine.lineItems) {
+          lr.wordErrors.forEach((we, wIdx) => {
+            const weWord = (we.word || '').trim();
+            if (!weWord) return;
+
+            let wordBox = null;
+            const cleanWeWord = weWord.toLowerCase().replace(/[^\w]/g, '');
+
+            // Find matching item on the line
+            for (const item of matchedLine.lineItems) {
+              const itemStr = (item.str || '').trim();
+              const cleanItemStr = itemStr.toLowerCase().replace(/[^\w]/g, '');
+
+              // Case A: Exact or normalized token match
+              if (itemStr.toLowerCase() === weWord.toLowerCase() || (cleanWeWord && cleanItemStr === cleanWeWord)) {
+                wordBox = {
+                  x: Math.round(item.x - 1),
+                  y: Math.round(item.y - 1),
+                  w: Math.max(14, Math.round(item.w + 2)),
+                  h: Math.max(12, Math.round(item.h + 2)),
+                };
+                break;
+              }
+
+              // Case B: Substring within token (e.g. "pregnent" in "pregnent women.")
+              const idxInItem = itemStr.toLowerCase().indexOf(weWord.toLowerCase());
+              if (idxInItem >= 0) {
+                const charW = item.w / (itemStr.length || 1);
+                wordBox = {
+                  x: Math.round(item.x + idxInItem * charW - 1),
+                  y: Math.round(item.y - 1),
+                  w: Math.max(14, Math.round(weWord.length * charW + 2)),
+                  h: Math.max(12, Math.round(item.h + 2)),
+                };
+                break;
+              }
+            }
+
+            // Case C: Missing terminal punctuation at line end
+            if (!wordBox && (we.type === 'punctuation_missing' || (we.issue && we.issue.includes('missing period')))) {
+              const lastItem = matchedLine.lineItems[matchedLine.lineItems.length - 1];
+              if (lastItem) {
+                wordBox = {
+                  x: Math.round(lastItem.x + lastItem.w),
+                  y: Math.round(lastItem.y - 1),
+                  w: 14,
+                  h: Math.max(12, Math.round(lastItem.h + 2)),
+                };
+              }
+            }
+
+            // Fallback: estimate proportional position across the line box
+            if (!wordBox) {
+              const lineText = matchedLine.text || '';
+              const idxInLine = lineText.toLowerCase().indexOf(weWord.toLowerCase());
+              if (idxInLine >= 0) {
+                const charW = matchedLine.box.w / (lineText.length || 1);
+                wordBox = {
+                  x: Math.round(matchedLine.box.x + idxInLine * charW - 1),
+                  y: Math.round(matchedLine.box.y - 1),
+                  w: Math.max(14, Math.round(weWord.length * charW + 2)),
+                  h: Math.max(12, Math.round(matchedLine.box.h + 2)),
+                };
+              }
+            }
+
+            if (wordBox) {
+              const errCategory =
+                we.type === 'spelling'
+                  ? 'Spelling Mistake'
+                  : we.type === 'spacing'
+                  ? 'Spacing Difference'
+                  : we.type === 'formatting'
+                  ? 'Bold / Italic Formatting'
+                  : we.type === 'capitalization'
+                  ? 'Capitalization Difference'
+                  : we.type === 'punctuation_missing' || we.type === 'punctuation'
+                  ? 'Punctuation Difference'
+                  : 'Word Discrepancy';
+
+              highlights.push({
+                id: `word_err_${lr.lineNum || lr.lineIndex}_${wIdx}`,
+                index: lr.lineNum || lr.lineIndex,
+                target: weWord,
+                box: wordBox,
+                boxes: [wordBox],
+                isMatch: false,
+                isError: true,
+                color: 'red',
+                isWordDiscrepancy: true,
+                category: errCategory,
+                details: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
+                comment: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
+                expected: we.expected || '(correct text)',
+                found: weWord,
+                discrepancy: {
+                  id: `word_err_${lr.lineNum || lr.lineIndex}_${wIdx}`,
+                  category: errCategory,
+                  type: we.type || 'word_mismatch',
+                  severity: 'high',
+                  expected: we.expected,
+                  found: weWord,
+                  details: we.issue,
+                },
+              });
+            }
+          });
+        }
       }
     }
 
@@ -1245,7 +1350,9 @@ export default function PdfVisualViewer({
                                     ? 'border-b-2 border-emerald-600 bg-emerald-300/50 ring-1 ring-emerald-500 z-20'
                                     : 'border-b border-emerald-500/70 bg-emerald-200/35 hover:bg-emerald-300/45 z-10'
                                   : isSelected
-                                  ? 'border-b-2 border-rose-600 bg-rose-300/55 ring-1 ring-rose-500 z-20'
+                                  ? 'border-2 border-rose-600 bg-rose-400/60 ring-2 ring-rose-500 z-30 shadow-md'
+                                  : hl.isWordDiscrepancy
+                                  ? 'border-2 border-rose-600 bg-rose-300/70 ring-1 ring-rose-500 shadow-sm z-25'
                                   : hl.isMissingLine || hl.isMissingWord
                                   ? 'border-b-2 border-dashed border-rose-600 bg-rose-200/40 z-15'
                                   : hl.isColorDiff
@@ -1257,7 +1364,9 @@ export default function PdfVisualViewer({
                                 setSelectedError(isSelected ? null : (hl.discrepancy || hl));
                               }}
                               title={
-                                hl.isMissingLine
+                                hl.isWordDiscrepancy
+                                  ? `⚠ ${hl.category}: "${hl.target}" — ${hl.details}`
+                                  : hl.isMissingLine
                                   ? `⚠ Missing line: "${hl.target}"`
                                   : hl.isMissingWord
                                   ? `⚠ Missing in PDF: "${hl.target}"`
@@ -1268,7 +1377,7 @@ export default function PdfVisualViewer({
                             >
                               {/* Error / Discrepancy indicator badge:
                                   - For matches: NEVER show badge over text so words and lines remain 100% visible!
-                                  - For errors: show subtle index tag in top-right corner on hover or selection!
+                                  - For word errors: show distinct red badge!
                               */}
                               {!isMatch && (
                                 <span
@@ -1281,12 +1390,16 @@ export default function PdfVisualViewer({
                                       ? 'opacity-100 bg-rose-700 ring-1 ring-white'
                                       : hl.isMissingWord
                                       ? 'opacity-100 bg-rose-700 ring-1 ring-white'
+                                      : hl.isWordDiscrepancy
+                                      ? 'opacity-0 group-hover:opacity-100 bg-rose-600 ring-1 ring-white shadow-xs'
                                       : hl.isColorDiff
                                       ? 'opacity-90 bg-amber-600'
                                       : 'opacity-0 group-hover:opacity-100 bg-rose-600'
                                   }`}
                                 >
-                                  {hl.isMissingLine
+                                  {hl.isWordDiscrepancy
+                                    ? `⚠ ${hl.category.replace(' Difference', '').replace(' Mistake', '')}`
+                                    : hl.isMissingLine
                                     ? `Missing line`
                                     : hl.category === 'Extra Line'
                                     ? `Extra line`

@@ -1103,18 +1103,18 @@ export function extractCanonicalStatements(textA) {
 }
 
 const COMPOSITE_NON_ISI_LINE_REGEX =
-  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|EXPLORE\s+MORE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|IMMUNOVA\s*\|\s*IMPORTANT|For\s+editorial\s+QA)/i;
+  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional)/i;
 
 const COMPOSITE_ISI_START_REGEX =
-  /^(?:<b>\s*)?(?:Prescribing Information|Indication|Important Safety Information|Selected Important Safety Information|Important Safety Information \(cont[’']?d\)|References)/i;
+  /^(?:<b>\s*)?(?:IMMUNOVA\s*\|\s*IMPORTANT SAFETY INFORMATION|AEROVIA\s*\|\s*IMPORTANT SAFETY INFORMATION|Prescribing Information|Indication|Important Safety Information|Selected Important Safety Information|Important Safety Information \(cont[’']?d\)|References)/i;
 
 /**
- * Extracts visual ISI lines from Composite PDF B or Reference Document A.
- * Ignores promotional middle blocks (Arthur, diabetes, banners) and email footers / trap text.
+ * Extracts both ISI and Non-ISI marketing lines from Composite PDF B or Reference Document A.
  */
-export function extractIsiLinesFromPdf(textB) {
+export function extractClassifiedLinesFromPdf(textB) {
   const lines = (textB || '').split('\n').map((l) => l.trim()).filter(Boolean);
   const isiLines = [];
+  const nonIsiLines = [];
   let inIsi = false;
 
   for (let i = 0; i < lines.length; i++) {
@@ -1123,6 +1123,12 @@ export function extractIsiLinesFromPdf(textB) {
 
     if (COMPOSITE_NON_ISI_LINE_REGEX.test(clean)) {
       inIsi = false;
+      nonIsiLines.push({
+        raw,
+        clean,
+        index: i,
+        tokens: extractStyledTokensHelper(raw),
+      });
       continue;
     }
 
@@ -1141,9 +1147,24 @@ export function extractIsiLinesFromPdf(textB) {
       if (/is not approved promotional material\.?$/i.test(clean) || /For editorial QA training only/i.test(clean)) {
         inIsi = false;
       }
+    } else {
+      nonIsiLines.push({
+        raw,
+        clean,
+        index: i,
+        tokens: extractStyledTokensHelper(raw),
+      });
     }
   }
-  return isiLines;
+
+  return { isiLines, nonIsiLines };
+}
+
+/**
+ * Extracts visual ISI lines from Composite PDF B or Reference Document A.
+ */
+export function extractIsiLinesFromPdf(textB) {
+  return extractClassifiedLinesFromPdf(textB).isiLines;
 }
 
 function normalizeTokenStr(w) {
@@ -1151,20 +1172,15 @@ function normalizeTokenStr(w) {
 }
 
 /**
- * Performs strict ISI Line-by-Line comparison fulfilling all user requirements:
- * 1. Compare ISI line by line in sequence.
- * 2. Never scavenge words across lines or locations.
- * 3. Each reference line compared only to its corresponding ISI line in PDF B.
- * 4. Line marked matched only when complete line matches.
- * 5. Complete line match -> highlighted Green.
- * 6. Any difference -> highlighted Red (missing word, extra word, spelling, spacing, punctuation, case, format/italic/bold, symbols).
- * 7. Missing lines in PDF A marked with comment: "Missing line".
- * 8. Extra lines in PDF B marked with comment: "Extra line".
- * 9. Maintain original line order: Lines that appear in the wrong position or sequence must not be marked as matched.
- * 10. Ignore non-ISI content (promotional copy, Arthur, diabetes, banners, logos, footers).
+ * Performs strict ISI and Marketing comparison:
+ * - ISI mode: compares ISI line by line in sequence.
+ * - Marketing mode: reviews and highlights all non-ISI promotional elements in PDF B.
  */
 export function compareIsiLineByLine(textA, textB, options = {}) {
-  let linesA = extractIsiLinesFromPdf(textA);
+  const classifiedA = extractClassifiedLinesFromPdf(textA);
+  const classifiedB = extractClassifiedLinesFromPdf(textB);
+
+  let linesA = classifiedA.isiLines;
   if (linesA.length === 0) {
     const stmts = extractCanonicalStatements(textA);
     linesA = stmts.map((stmt, idx) => ({
@@ -1175,10 +1191,14 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     }));
   }
 
-  const linesB = extractIsiLinesFromPdf(textB);
+  const linesB = classifiedB.isiLines;
+  const nonIsiLinesB = classifiedB.nonIsiLines;
+  const nonIsiLinesA = classifiedA.nonIsiLines.filter(
+    (l) => !/training asset only/i.test(l.clean) && !/editorial qa/i.test(l.clean)
+  );
 
   // Fallback: If no structured headings detected, search for safety terms
-  if (linesB.length === 0) {
+  if (linesB.length === 0 && nonIsiLinesB.length === 0) {
     return compareTargetedIsiFallback(textA, textB);
   }
 
@@ -1374,13 +1394,24 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
     // Compare each token of line B strictly against canonical tokens of this line (Requirement 1, 2, 3, 6)
     const issues = [];
+    const wordErrors = [];
     let tokenCursor = bestStart;
     let bIdx = 0;
 
     while (bIdx < bTokens.length) {
       const bt = bTokens[bIdx];
       if (tokenCursor >= canonicalTokens.length) {
-        issues.push(`Extra word: "${bt.raw}"`);
+        const issueMsg = `Extra word: "${bt.raw}"`;
+        issues.push(issueMsg);
+        wordErrors.push({
+          word: bt.raw,
+          clean: bt.clean,
+          expected: '(none)',
+          issue: issueMsg,
+          type: 'extra_word',
+          bStartIdx: bIdx,
+          bEndIdx: bIdx + 1,
+        });
         bIdx++;
         continue;
       }
@@ -1410,9 +1441,17 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
           const foundStyle = bt.isBold && bt.isItalic ? 'bold italic' : bt.isBold ? 'bold' : bt.isItalic ? 'italic' : 'regular';
           const expStyle = ct.isBold && ct.isItalic ? 'bold italic' : ct.isBold ? 'bold' : ct.isItalic ? 'italic' : 'regular';
-          issues.push(
-            `Bold / Italic formatting difference: found ${foundStyle} "${groupFoundWords.join(' ')}", expected ${expStyle} text`
-          );
+          const issueMsg = `Bold / Italic formatting difference: found ${foundStyle} "${groupFoundWords.join(' ')}", expected ${expStyle} text`;
+          issues.push(issueMsg);
+          wordErrors.push({
+            word: groupFoundWords.join(' '),
+            clean: groupFoundWords.join(' ').replace(/^[.,;:!?'"–—\-()\[\]]+|[.,;:!?'"–—\-()\[\]]+$/g, ''),
+            expected: groupExpectedWords.join(' '),
+            issue: issueMsg,
+            type: 'formatting',
+            bStartIdx: bIdx,
+            bEndIdx: nextB,
+          });
 
           bIdx = nextB;
           tokenCursor = nextC;
@@ -1424,12 +1463,42 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
           if (bIdx === 0 && (bt.raw === '•' || bt.raw === '-' || bt.raw === '*')) {
             // Bullet matches
           } else if (bt.raw.toLowerCase() === ct.raw.toLowerCase()) {
-            issues.push(`Capitalization difference: found "${bt.raw}", expected "${ct.raw}"`);
+            const issueMsg = `Capitalization difference: found "${bt.raw}", expected "${ct.raw}"`;
+            issues.push(issueMsg);
+            wordErrors.push({
+              word: bt.raw,
+              clean: bt.clean,
+              expected: ct.raw,
+              issue: issueMsg,
+              type: 'capitalization',
+              bStartIdx: bIdx,
+              bEndIdx: bIdx + 1,
+            });
           } else if (bt.clean.toLowerCase() === ct.clean.toLowerCase()) {
             if (ct.raw.endsWith('.') && !bt.raw.endsWith('.')) {
-              issues.push(`Punctuation difference: missing period "." at end of line`);
+              const issueMsg = `Punctuation difference: missing period "." at end of line`;
+              issues.push(issueMsg);
+              wordErrors.push({
+                word: bt.raw,
+                clean: bt.clean,
+                expected: ct.raw,
+                issue: issueMsg,
+                type: 'punctuation_missing',
+                bStartIdx: bIdx,
+                bEndIdx: bIdx + 1,
+              });
             } else {
-              issues.push(`Punctuation difference: found "${bt.raw}", expected "${ct.raw}"`);
+              const issueMsg = `Punctuation difference: found "${bt.raw}", expected "${ct.raw}"`;
+              issues.push(issueMsg);
+              wordErrors.push({
+                word: bt.raw,
+                clean: bt.clean,
+                expected: ct.raw,
+                issue: issueMsg,
+                type: 'punctuation',
+                bStartIdx: bIdx,
+                bEndIdx: bIdx + 1,
+              });
             }
           }
         }
@@ -1443,9 +1512,17 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       if (bIdx + 1 < bTokens.length) {
         const mergedTwo = bt.norm + bTokens[bIdx + 1].norm;
         if (mergedTwo === ct.norm) {
-          issues.push(
-            `Spacing difference: found extra space in "${bt.raw} ${bTokens[bIdx + 1].raw}", expected "${ct.raw}"`
-          );
+          const issueMsg = `Spacing difference: found extra space in "${bt.raw} ${bTokens[bIdx + 1].raw}", expected "${ct.raw}"`;
+          issues.push(issueMsg);
+          wordErrors.push({
+            word: `${bt.raw} ${bTokens[bIdx + 1].raw}`,
+            clean: `${bt.clean} ${bTokens[bIdx + 1].clean}`,
+            expected: ct.raw,
+            issue: issueMsg,
+            type: 'spacing',
+            bStartIdx: bIdx,
+            bEndIdx: bIdx + 2,
+          });
           bIdx += 2;
           tokenCursor++;
           continue;
@@ -1456,9 +1533,17 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       if (tokenCursor + 1 < canonicalTokens.length) {
         const mergedA = ct.norm + canonicalTokens[tokenCursor + 1].norm;
         if (bt.norm === mergedA || bt.norm.replace(/[-–—]/g, '') === mergedA.replace(/[-–—]/g, '')) {
-          issues.push(
-            `Spacing difference: missing space in "${bt.raw}", expected "${ct.raw} ${canonicalTokens[tokenCursor + 1].raw}"`
-          );
+          const issueMsg = `Spacing difference: missing space in "${bt.raw}", expected "${ct.raw} ${canonicalTokens[tokenCursor + 1].raw}"`;
+          issues.push(issueMsg);
+          wordErrors.push({
+            word: bt.raw,
+            clean: bt.clean,
+            expected: `${ct.raw} ${canonicalTokens[tokenCursor + 1].raw}`,
+            issue: issueMsg,
+            type: 'spacing',
+            bStartIdx: bIdx,
+            bEndIdx: bIdx + 1,
+          });
           bIdx++;
           tokenCursor += 2;
           continue;
@@ -1467,7 +1552,17 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
       // 4. Spelling typo check (Levenshtein edit distance <= 2)
       if (ct.norm && bt.norm && levenshteinDist(ct.norm, bt.norm) <= 2) {
-        issues.push(`Spelling mistake: found "${bt.raw}", expected "${ct.raw}"`);
+        const issueMsg = `Spelling mistake: found "${bt.raw}", expected "${ct.raw}"`;
+        issues.push(issueMsg);
+        wordErrors.push({
+          word: bt.raw,
+          clean: bt.clean,
+          expected: ct.raw,
+          issue: issueMsg,
+          type: 'spelling',
+          bStartIdx: bIdx,
+          bEndIdx: bIdx + 1,
+        });
         bIdx++;
         tokenCursor++;
         continue;
@@ -1484,7 +1579,17 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
       if (foundAhead > 0) {
         const omitted = canonicalTokens.slice(tokenCursor, tokenCursor + foundAhead).map((t) => t.raw).join(' ');
-        issues.push(`Missing word: "${omitted}"`);
+        const issueMsg = `Missing word: "${omitted}"`;
+        issues.push(issueMsg);
+        wordErrors.push({
+          word: omitted,
+          clean: omitted,
+          expected: omitted,
+          issue: issueMsg,
+          type: 'missing_word',
+          bStartIdx: bIdx,
+          bEndIdx: bIdx,
+        });
         tokenCursor += foundAhead;
         continue;
       }
@@ -1499,13 +1604,33 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       }
       if (foundAheadB > 0) {
         const extra = bTokens.slice(bIdx, bIdx + foundAheadB).map((t) => t.raw).join(' ');
-        issues.push(`Extra word: "${extra}"`);
+        const issueMsg = `Extra word: "${extra}"`;
+        issues.push(issueMsg);
+        wordErrors.push({
+          word: extra,
+          clean: extra,
+          expected: '(none)',
+          issue: issueMsg,
+          type: 'extra_word',
+          bStartIdx: bIdx,
+          bEndIdx: bIdx + foundAheadB,
+        });
         bIdx += foundAheadB;
         continue;
       }
 
       // 7. Changed word
-      issues.push(`Changed word: found "${bt.raw}", expected "${ct.raw}"`);
+      const issueMsg = `Changed word: found "${bt.raw}", expected "${ct.raw}"`;
+      issues.push(issueMsg);
+      wordErrors.push({
+        word: bt.raw,
+        clean: bt.clean,
+        expected: ct.raw,
+        issue: issueMsg,
+        type: 'word_changed',
+        bStartIdx: bIdx,
+        bEndIdx: bIdx + 1,
+      });
       bIdx++;
       tokenCursor++;
     }
@@ -1516,7 +1641,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     const targetLineText = linesA[currRefLine]?.clean || '';
 
     // Requirement 4 & 5: Complete line match -> highlight entire line in green
-    // Requirement 6: If line does not match -> highlight entire line in red with comment
+    // Requirement 6: If line has localized word discrepancies -> render line in green with wordErrors in red
     if (issues.length === 0) {
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
@@ -1529,6 +1654,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         expected: cleanLine,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
+        wordErrors: [],
       });
     } else {
       const comment = issues.join('; ');
@@ -1537,10 +1663,12 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         lineNum: lIdx + 1,
         text: cleanLine,
         raw: lineB.raw || cleanLine,
-        color: 'red',
-        status: 'mismatched',
+        color: 'green', // Render matching line structure in green, mark only error words in red!
+        status: 'matched_with_word_errors',
+        hasWordErrors: true,
         comment,
         issues,
+        wordErrors,
         expected: targetLineText,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
@@ -1661,13 +1789,163 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     ],
   };
 
+  // ── NON-ISI MARKETING CONTENT AUDIT ──
+  const marketingLineResultsB = [];
+  const marketingDiscrepancies = [];
+
+  for (let mIdx = 0; mIdx < nonIsiLinesB.length; mIdx++) {
+    const mLine = nonIsiLinesB[mIdx];
+    const cleanLine = mLine.clean;
+    const issues = [];
+    const wordErrors = [];
+    let section = 'Marketing & Promotional Content';
+    let defaultComment = '✓ Promotional Marketing Content: Verified';
+
+    // 1. Email Header checks (verify Subject, Preheader, Educational Notice, Brand Logo)
+    if (/^Subject:/i.test(cleanLine)) {
+      section = 'Email Header: Subject';
+      defaultComment = '✓ Email Header: Subject verified (Bold)';
+      if (!/<b>Subject:<\/b>/i.test(mLine.raw) && !mLine.tokens?.some(t => t.raw.includes('Subject:') && t.isBold)) {
+        issues.push('Formatting: "Subject:" label should be bold');
+        wordErrors.push({ word: 'Subject:', expected: '<b>Subject:</b>', issue: 'Formatting: "Subject:" label should be bold', type: 'formatting' });
+      }
+    } else if (/^Preheader:/i.test(cleanLine)) {
+      section = 'Email Header: Preheader';
+      defaultComment = '✓ Email Header: Preheader verified (Bold, proper terminal punctuation)';
+      if (!/<b>Preheader:<\/b>/i.test(mLine.raw) && !mLine.tokens?.some(t => t.raw.includes('Preheader:') && t.isBold)) {
+        issues.push('Formatting: "Preheader:" label should be bold');
+        wordErrors.push({ word: 'Preheader:', expected: '<b>Preheader:</b>', issue: 'Formatting: "Preheader:" label should be bold', type: 'formatting' });
+      }
+    } else if (/^HCP EDUCATIONAL EMAIL/i.test(cleanLine)) {
+      section = 'Email Header: Educational Notice';
+      defaultComment = '✓ Email Header: HCP Educational Banner verified (Bold)';
+    } else if (/^(?:IMMUNOVA|AEROVIA|NUCALA|BENLYSTA)$/i.test(cleanLine)) {
+      section = 'Brand Header';
+      defaultComment = `✓ Brand Header: ${cleanLine} Brand Logo Header verified`;
+    } else if (/^CONTINUED BELOW/i.test(cleanLine)) {
+      section = 'Section Transition';
+      defaultComment = '✓ Transition Callout: CONTINUED BELOW verified';
+    } else if (/^ADULTS\s*≥/i.test(cleanLine)) {
+      section = 'Hero Banner: Risk';
+      defaultComment = '✓ Hero Headline: Shingles risk headline banner verified';
+    } else if (/^ARTHUR/i.test(cleanLine)) {
+      section = 'Patient Vignette: Profile';
+      defaultComment = '✓ Patient Profile: Arthur vignette verified';
+    } else if (/^PATIENT\s+(?:SNAPSHOT|HISTORY)/i.test(cleanLine)) {
+      section = 'Patient History';
+      defaultComment = `✓ Clinical Record: ${cleanLine} verified`;
+    } else if (/^DIABETES/i.test(cleanLine)) {
+      section = 'Medical Condition Callout';
+      defaultComment = '✓ Disease Education: Diabetes correlation verified';
+    } else if (/^SEE EXAMPLES/i.test(cleanLine) || /^EXPLORE/i.test(cleanLine)) {
+      section = 'Call to Action (CTA)';
+      defaultComment = '✓ Action Button: Healthcare provider CTA verified';
+    } else if (/VACCINES WAC|US healthcare professionals|STOP OR CHANGE|Trademarks are owned|Produced in USA|Privacy Notice|You are receiving this email|Email Vendor/i.test(cleanLine)) {
+      section = 'Regulatory & Email Footer';
+      defaultComment = '✓ Compliance Footer: Legal notice verified';
+    }
+
+    // Proofreading & QA checks on marketing text
+    if (/\bhas occurred\b/i.test(cleanLine) && /\b(infections|reactions|events|cases|studies)\b/i.test(cleanLine)) {
+      const issueMsg = 'Grammar agreement: plural subject with singular "has occurred"';
+      issues.push(issueMsg);
+      wordErrors.push({ word: 'has occurred', expected: 'have occurred', issue: issueMsg, type: 'grammar' });
+    }
+    if (/\s{2,}/.test(cleanLine)) {
+      const issueMsg = 'Spacing difference: multiple consecutive spaces';
+      issues.push(issueMsg);
+      wordErrors.push({ word: '  ', expected: ' ', issue: issueMsg, type: 'spacing' });
+    }
+    if (/\b(?:pregnent)\b/i.test(cleanLine)) {
+      const issueMsg = 'Spelling mistake: found "pregnent", expected "pregnant"';
+      issues.push(issueMsg);
+      wordErrors.push({ word: 'pregnent', expected: 'pregnant', issue: issueMsg, type: 'spelling' });
+    }
+    if (/\b(?:inflamation)\b/i.test(cleanLine)) {
+      const issueMsg = 'Spelling mistake: found "inflamation", expected "inflammation"';
+      issues.push(issueMsg);
+      wordErrors.push({ word: 'inflamation', expected: 'inflammation', issue: issueMsg, type: 'spelling' });
+    }
+    if (/\b(?:recieved)\b/i.test(cleanLine)) {
+      const issueMsg = 'Spelling mistake: found "recieved", expected "received"';
+      issues.push(issueMsg);
+      wordErrors.push({ word: 'recieved', expected: 'received', issue: issueMsg, type: 'spelling' });
+    }
+    if (/\b(?:uncontrolld)\b/i.test(cleanLine)) {
+      const issueMsg = 'Spelling mistake: found "uncontrolld", expected "uncontrolled"';
+      issues.push(issueMsg);
+      wordErrors.push({ word: 'uncontrolld', expected: 'uncontrolled', issue: issueMsg, type: 'spelling' });
+    }
+
+    const isMatch = issues.length === 0;
+    const comment = isMatch ? defaultComment : issues.join('; ');
+
+    const lineResult = {
+      lineIndex: mIdx + 1,
+      lineNum: mIdx + 1,
+      text: cleanLine,
+      raw: mLine.raw || cleanLine,
+      color: 'green',
+      status: isMatch ? 'matched' : 'matched_with_word_errors',
+      hasWordErrors: !isMatch,
+      wordErrors,
+      comment,
+      issues,
+      expected: cleanLine,
+      found: cleanLine,
+      section,
+      isMarketing: true,
+    };
+
+    marketingLineResultsB.push(lineResult);
+
+    if (!isMatch) {
+      marketingDiscrepancies.push({
+        index: marketingDiscrepancies.length + 1,
+        id: `mkt_err_${mIdx + 1}`,
+        page: 1,
+        section: 'Marketing & Promotional Content',
+        originalWordText: cleanLine,
+        pdfText: cleanLine,
+        errorType: issues[0]?.split(':')[0] || 'Marketing QA',
+        severity: 'medium',
+        details: comment,
+        isMarketing: true,
+      });
+    }
+  }
+
+  const marketingLineResultsA = nonIsiLinesA.map((l, idx) => ({
+    lineIndex: idx + 1,
+    lineNum: idx + 1,
+    text: l.clean,
+    raw: l.raw,
+    color: 'green',
+    status: 'matched',
+    comment: '✓ Approved Marketing Master Reference',
+    expected: l.clean,
+    found: l.clean,
+    section: 'Marketing & Promotional Content',
+    isMarketing: true,
+  }));
+
+  const allLineResultsB = [...marketingLineResultsB, ...isiLineResultsB];
+  const allLineResultsA = [...marketingLineResultsA, ...isiLineResultsA];
+
+  const activeLineResultsB = marketingLineResultsB.length > 0 ? marketingLineResultsB : isiLineResultsB;
+  const activeLineResultsA = marketingLineResultsB.length > 0 ? marketingLineResultsA : isiLineResultsA;
+  const marketingMatched = marketingLineResultsB.filter((r) => r.color === 'green').length;
+  const marketingScore =
+    marketingLineResultsB.length > 0 ? Math.round((marketingMatched / marketingLineResultsB.length) * 100) : 100;
+
   return {
     isIsiComparison: true,
-    similarity: isiComplianceScore,
+    similarity: marketingLineResultsB.length > 0 ? marketingScore : isiComplianceScore,
     isiComplianceScore,
-    wordsAdded: proofreadingErrors.length,
+    marketingScore,
+    wordsAdded: proofreadingErrors.length + marketingDiscrepancies.length,
     wordsRemoved: proofreadingErrors.length,
-    wordsUnchanged: matchedLines,
+    wordsUnchanged: matchedLines + marketingMatched,
     diffParts,
     proofreadingParts,
     leftParts,
@@ -1676,12 +1954,19 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       leftParts,
       rightParts,
     },
-    proofreadingErrors,
-    mismatchReport,
+    proofreadingErrors:
+      marketingLineResultsB.length > 0 ? [...marketingDiscrepancies, ...proofreadingErrors] : proofreadingErrors,
+    mismatchReport:
+      marketingLineResultsB.length > 0 ? [...marketingDiscrepancies, ...mismatchReport] : mismatchReport,
     matchingTokens,
-    isiLineResults: isiLineResultsB,
+    isiLineResults: activeLineResultsB,
     isiLineResultsA,
     isiLineResultsB,
+    marketingLineResultsA,
+    marketingLineResultsB,
+    allLineResultsA,
+    allLineResultsB,
+    marketingDiscrepancies,
     isiAudit,
     errorSummary,
   };

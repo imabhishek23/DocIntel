@@ -7,6 +7,8 @@ import {
   Check,
   RotateCcw,
   ShieldAlert,
+  ShieldCheck,
+  Megaphone,
   FileText,
   AlertTriangle,
   Scale,
@@ -94,6 +96,12 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
     isiLineResults = [],
     isiLineResultsA = [],
     isiLineResultsB = [],
+    marketingLineResultsA = [],
+    marketingLineResultsB = [],
+    allLineResultsA = [],
+    allLineResultsB = [],
+    marketingScore,
+    marketingDiscrepancies = [],
     isIsiComparison = false,
     isiComplianceScore,
     isiDetectedBlocks = [],
@@ -150,6 +158,29 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
   const [copiedMismatchReport, setCopiedMismatchReport] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [sliderPos, setSliderPos] = useState(50);
+  const [auditScope, setAuditScope] = useState('marketing'); // 'marketing' | 'isi' | 'all'
+
+  const activeLineResultsB = useMemo(() => {
+    if (auditScope === 'marketing') {
+      return marketingLineResultsB && marketingLineResultsB.length > 0 ? marketingLineResultsB : [];
+    }
+    if (auditScope === 'isi') {
+      return isiLineResultsB && isiLineResultsB.length > 0 ? isiLineResultsB : isiLineResults;
+    }
+    return allLineResultsB && allLineResultsB.length > 0
+      ? allLineResultsB
+      : (isiLineResultsB && isiLineResultsB.length > 0 ? isiLineResultsB : isiLineResults);
+  }, [auditScope, marketingLineResultsB, isiLineResultsB, isiLineResults, allLineResultsB]);
+
+  const activeLineResultsA = useMemo(() => {
+    if (auditScope === 'marketing') {
+      return marketingLineResultsA || [];
+    }
+    if (auditScope === 'isi') {
+      return isiLineResultsA || [];
+    }
+    return allLineResultsA && allLineResultsA.length > 0 ? allLineResultsA : (isiLineResultsA || []);
+  }, [auditScope, marketingLineResultsA, isiLineResultsA, allLineResultsA]);
 
   // Synchronized scrolling refs & state
   const leftSlideRef = useRef(null);
@@ -813,23 +844,55 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
         <div className="space-y-6">
           {/* Top 3 Stat Cards + Proofreading Discrepancy Bar */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* 1. Similarity / ISI Compliance */}
+            {/* 1. Similarity / Compliance Score */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm flex flex-col justify-center items-center text-center relative overflow-hidden">
               {isIsiComparison && (
-                <div className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider border border-emerald-300">
-                  <Sparkles className="h-2.5 w-2.5 text-emerald-600" />
-                  ISI Safety Mode
+                <div className={`absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider border ${
+                  auditScope === 'marketing'
+                    ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                    : auditScope === 'isi'
+                    ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                    : 'bg-slate-100 text-slate-800 border-slate-300'
+                }`}>
+                  {auditScope === 'marketing' ? (
+                    <>
+                      <Megaphone className="h-2.5 w-2.5 text-indigo-600" />
+                      Marketing Review Mode
+                    </>
+                  ) : auditScope === 'isi' ? (
+                    <>
+                      <Sparkles className="h-2.5 w-2.5 text-emerald-600" />
+                      ISI Safety Mode
+                    </>
+                  ) : (
+                    <>
+                      <Layers className="h-2.5 w-2.5 text-slate-600" />
+                      Full Document
+                    </>
+                  )}
                 </div>
               )}
               <span className="font-display text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight">
-                {isIsiComparison && isiComplianceScore !== undefined ? isiComplianceScore : similarity}%
+                {auditScope === 'marketing'
+                  ? (marketingScore !== undefined ? marketingScore : 100)
+                  : auditScope === 'isi' && isiComplianceScore !== undefined
+                  ? isiComplianceScore
+                  : similarity}%
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                {isIsiComparison ? 'ISI Compliance Score' : 'Similarity'}
+                {auditScope === 'marketing'
+                  ? 'Marketing Content Quality'
+                  : auditScope === 'isi'
+                  ? 'ISI Compliance Score'
+                  : 'Overall Similarity'}
               </span>
               {isIsiComparison && (
                 <span className="mt-1 text-[10px] text-slate-500 font-medium">
-                  {isWordToPdf ? 'Word Master' : 'Reference Standard'} Source of Truth (Non-ISI elements ignored)
+                  {auditScope === 'marketing'
+                    ? 'Reviewing Non-ISI Marketing & Promotional Content (ISI Unmarked)'
+                    : auditScope === 'isi'
+                    ? `${isWordToPdf ? 'Word Master' : 'Reference Standard'} Source of Truth (Non-ISI elements ignored)`
+                    : 'Full Document Comparison (Marketing + ISI)'}
                 </span>
               )}
             </div>
@@ -1416,6 +1479,72 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                   </div>
                 </div>
 
+                {/* REVIEW FOCUS / AUDIT SCOPE SELECTOR */}
+                {isIsiComparison && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-500">Review Focus:</span>
+                      <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => setAuditScope('marketing')}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
+                            auditScope === 'marketing'
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                          }`}
+                        >
+                          <Megaphone className="h-3.5 w-3.5" />
+                          Non-ISI Marketing Content ({marketingLineResultsB.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAuditScope('isi')}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
+                            auditScope === 'isi'
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                          }`}
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5" />
+                          ISI Safety Content ({isiLineResultsB.length})
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAuditScope('all')}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
+                            auditScope === 'all'
+                              ? 'bg-slate-900 text-white shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                          }`}
+                        >
+                          <Layers className="h-3.5 w-3.5" />
+                          Full Document ({allLineResultsB.length})
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-xs font-semibold text-slate-500">
+                      {auditScope === 'marketing' && (
+                        <span className="inline-flex items-center gap-1.5 text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-md">
+                          <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
+                          Highlighting Non-ISI Marketing &amp; Promotional Content (ISI Section Unmarked)
+                        </span>
+                      )}
+                      {auditScope === 'isi' && (
+                        <span className="inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md">
+                          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                          Highlighting ISI Statements (Marketing Copy Unmarked)
+                        </span>
+                      )}
+                      {auditScope === 'all' && (
+                        <span className="inline-flex items-center gap-1.5 text-slate-700 bg-slate-100 border border-slate-300 px-2.5 py-1 rounded-md">
+                          Highlighting All Content Across Document
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* DUAL SLIDE VIEW: VISUAL PDF (Default) vs REDLINE with Draggable Split Adjuster */}
                 {slideDisplayMode === 'visual' ? (
                   <div
@@ -1449,11 +1578,15 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           imageSrc={initialImageA}
                           title={docAName || 'Document A (Staging Reference Standard)'}
                           badge="Slide A"
-                          subtitle="✓ Staging Master (Error-Free Reference)"
+                          subtitle={
+                            auditScope === 'marketing'
+                              ? '✓ Staging Master (Promotional Reference)'
+                              : '✓ Staging Master (Error-Free Reference)'
+                          }
                           isAuditTarget={false}
                           isWordToPdf={isWordToPdf}
                           isIsiComparison={isIsiComparison}
-                          isiLineResults={isiLineResultsA && isiLineResultsA.length > 0 ? isiLineResultsA : isiLineResults}
+                          isiLineResults={activeLineResultsA}
                           scale={pdfZoom}
                           pageNumber={pdfPage}
                           onPageChange={setPdfPage}
@@ -1502,19 +1635,29 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                         imageSrc={initialImageB}
                         title={docBName || 'Document B (Composite Audit Target)'}
                         badge="Slide B"
-                        subtitle="⚠ Composite Audit Target"
+                        subtitle={
+                          auditScope === 'marketing'
+                            ? '⚠ Composite Audit Target (Marketing Copy Mode)'
+                            : '⚠ Composite Audit Target (ISI Mode)'
+                        }
                         isAuditTarget={true}
                         isWordToPdf={isWordToPdf}
                         isIsiComparison={isIsiComparison}
-                        isiLineResults={isiLineResults}
+                        isiLineResults={activeLineResultsB}
                         scale={pdfZoom}
                         pageNumber={pdfPage}
                         onPageChange={setPdfPage}
                         onTotalPagesChange={setPdfTotalPages}
                         scrollRef={rightSlideRef}
                         onScroll={handleRightScroll}
-                        discrepancies={proofreadingErrors}
-                        matchingTokens={matchingTokens}
+                        discrepancies={
+                          auditScope === 'marketing'
+                            ? marketingDiscrepancies
+                            : auditScope === 'isi'
+                            ? proofreadingErrors.filter((e) => !e.isMarketing)
+                            : proofreadingErrors
+                        }
+                        matchingTokens={auditScope === 'marketing' ? EMPTY_DISCREPANCIES : matchingTokens}
                         baselineCanvasRef={stagingCanvasRef}
                         onOpenComment={(err) => {
                           setActiveCommentTarget({
