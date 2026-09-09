@@ -158,7 +158,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
   const [copiedMismatchReport, setCopiedMismatchReport] = useState(false);
   const [copiedSummary, setCopiedSummary] = useState(false);
   const [sliderPos, setSliderPos] = useState(50);
-  const [auditScope, setAuditScope] = useState('marketing'); // 'marketing' | 'isi' | 'all'
+  const [auditScope, setAuditScope] = useState('isi'); // 'isi' | 'all' | 'marketing'
 
   const activeLineResultsB = useMemo(() => {
     if (auditScope === 'marketing') {
@@ -1487,18 +1487,6 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                       <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-200">
                         <button
                           type="button"
-                          onClick={() => setAuditScope('marketing')}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
-                            auditScope === 'marketing'
-                              ? 'bg-indigo-600 text-white shadow-xs'
-                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                          }`}
-                        >
-                          <Megaphone className="h-3.5 w-3.5" />
-                          Non-ISI Marketing Content ({marketingLineResultsB.length})
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => setAuditScope('isi')}
                           className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
                             auditScope === 'isi'
@@ -1521,6 +1509,20 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           <Layers className="h-3.5 w-3.5" />
                           Full Document ({allLineResultsB.length})
                         </button>
+                        {marketingLineResultsB.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setAuditScope('marketing')}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
+                              auditScope === 'marketing'
+                                ? 'bg-indigo-600 text-white shadow-xs'
+                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                            }`}
+                          >
+                            <Megaphone className="h-3.5 w-3.5" />
+                            Non-ISI Marketing Copy ({marketingLineResultsB.length})
+                          </button>
+                        )}
                       </div>
                     </div>
                     <div className="text-xs font-semibold text-slate-500">
@@ -1586,7 +1588,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           isAuditTarget={false}
                           isWordToPdf={isWordToPdf}
                           isIsiComparison={isIsiComparison}
-                          isiLineResults={activeLineResultsA}
+                          isiLineResults={[]}
                           scale={pdfZoom}
                           pageNumber={pdfPage}
                           onPageChange={setPdfPage}

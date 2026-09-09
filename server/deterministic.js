@@ -1932,20 +1932,18 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
   const allLineResultsB = [...marketingLineResultsB, ...isiLineResultsB];
   const allLineResultsA = [...marketingLineResultsA, ...isiLineResultsA];
 
-  const activeLineResultsB = marketingLineResultsB.length > 0 ? marketingLineResultsB : isiLineResultsB;
-  const activeLineResultsA = marketingLineResultsB.length > 0 ? marketingLineResultsA : isiLineResultsA;
   const marketingMatched = marketingLineResultsB.filter((r) => r.color === 'green').length;
   const marketingScore =
     marketingLineResultsB.length > 0 ? Math.round((marketingMatched / marketingLineResultsB.length) * 100) : 100;
 
   return {
     isIsiComparison: true,
-    similarity: marketingLineResultsB.length > 0 ? marketingScore : isiComplianceScore,
+    similarity: isiComplianceScore,
     isiComplianceScore,
     marketingScore,
-    wordsAdded: proofreadingErrors.length + marketingDiscrepancies.length,
+    wordsAdded: proofreadingErrors.length,
     wordsRemoved: proofreadingErrors.length,
-    wordsUnchanged: matchedLines + marketingMatched,
+    wordsUnchanged: matchedLines,
     diffParts,
     proofreadingParts,
     leftParts,
@@ -1954,12 +1952,10 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       leftParts,
       rightParts,
     },
-    proofreadingErrors:
-      marketingLineResultsB.length > 0 ? [...marketingDiscrepancies, ...proofreadingErrors] : proofreadingErrors,
-    mismatchReport:
-      marketingLineResultsB.length > 0 ? [...marketingDiscrepancies, ...mismatchReport] : mismatchReport,
+    proofreadingErrors,
+    mismatchReport,
     matchingTokens,
-    isiLineResults: activeLineResultsB,
+    isiLineResults: isiLineResultsB,
     isiLineResultsA,
     isiLineResultsB,
     marketingLineResultsA,

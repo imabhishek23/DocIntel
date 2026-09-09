@@ -1072,7 +1072,8 @@ export default function PdfVisualViewer({
   useEffect(() => {
     let isCancelled = false;
 
-    if ((!isAuditTarget && !isIsiComparison) || !renderedPageInfo) {
+    // Only audit target (Slide B) displays in-place highlights; main ISI reference (Slide A) remains clean without green lines
+    if (!isAuditTarget || !renderedPageInfo) {
       setPageHighlights([]);
       return;
     }
@@ -1303,8 +1304,8 @@ export default function PdfVisualViewer({
                 className="rounded-lg shadow-md border border-slate-300 bg-white block"
               />
 
-              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY (Slide A & B in ISI mode) */}
-              {(isAuditTarget || isIsiComparison) && pageHighlights.length > 0 && (
+              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY (Slide B Audit Target Only - main ISI on Slide A remains clean) */}
+              {isAuditTarget && pageHighlights.length > 0 && (
                 <div
                   className="absolute inset-0 pointer-events-none"
                   style={{
