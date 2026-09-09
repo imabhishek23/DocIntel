@@ -199,17 +199,30 @@ function computePageHighlights(
           isError: !isMatch,
           color: lr.color,
           category: isMatch
-            ? 'Approved ISI Match'
+            ? 'Complete Line Match'
             : lr.status === 'extra_line'
             ? 'Extra Line'
-            : (lr.comment || '').includes('Missing')
+            : (lr.comment || '').includes('Missing line') || lr.status === 'missing_line'
+            ? 'Missing Line'
+            : (lr.comment || '').includes('Missing word')
             ? 'Missing Word'
+            : (lr.comment || '').includes('Spacing')
+            ? 'Spacing Difference'
+            : (lr.comment || '').includes('Spelling')
+            ? 'Spelling Mistake'
+            : (lr.comment || '').includes('Capitalization')
+            ? 'Capitalization Difference'
+            : (lr.comment || '').includes('Punctuation')
+            ? 'Punctuation Difference'
+            : (lr.comment || '').includes('Bold') || (lr.comment || '').includes('Italic')
+            ? 'Bold / Italic Formatting'
             : 'Line Discrepancy',
           details: lr.comment || (isMatch ? 'Complete line match' : 'Line discrepancy detected'),
           comment: lr.comment,
           expected: lr.expected || lr.text,
           found: lr.found || lr.text,
           isLineDiscrepancy: !isMatch,
+          isMissingLine: !isMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
         });
       }
     }
@@ -954,7 +967,7 @@ export default function PdfVisualViewer({
   useEffect(() => {
     let isCancelled = false;
 
-    if (!isAuditTarget || !renderedPageInfo) {
+    if ((!isAuditTarget && !isIsiComparison) || !renderedPageInfo) {
       setPageHighlights([]);
       return;
     }
@@ -1185,8 +1198,8 @@ export default function PdfVisualViewer({
                 className="rounded-lg shadow-md border border-slate-300 bg-white block"
               />
 
-              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY (Slide B Only) */}
-              {isAuditTarget && pageHighlights.length > 0 && (
+              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY (Slide A & B in ISI mode) */}
+              {(isAuditTarget || isIsiComparison) && pageHighlights.length > 0 && (
                 <div
                   className="absolute inset-0 pointer-events-none"
                   style={{
@@ -1233,7 +1246,7 @@ export default function PdfVisualViewer({
                                     : 'border-b border-emerald-500/70 bg-emerald-200/35 hover:bg-emerald-300/45 z-10'
                                   : isSelected
                                   ? 'border-b-2 border-rose-600 bg-rose-300/55 ring-1 ring-rose-500 z-20'
-                                  : hl.isMissingWord
+                                  : hl.isMissingLine || hl.isMissingWord
                                   ? 'border-b-2 border-dashed border-rose-600 bg-rose-200/40 z-15'
                                   : hl.isColorDiff
                                   ? 'border-b border-amber-500 bg-amber-200/35 hover:bg-amber-300/45 z-10'
@@ -1244,10 +1257,12 @@ export default function PdfVisualViewer({
                                 setSelectedError(isSelected ? null : (hl.discrepancy || hl));
                               }}
                               title={
-                                hl.isMissingWord
+                                hl.isMissingLine
+                                  ? `⚠ Missing line: "${hl.target}"`
+                                  : hl.isMissingWord
                                   ? `⚠ Missing in PDF: "${hl.target}"`
                                   : isMatch
-                                  ? `✓ Approved ISI Match: "${hl.target}"`
+                                  ? `✓ Complete line match: "${hl.target}"`
                                   : `#${hl.index} ${hl.category}: ${hl.details}`
                               }
                             >
@@ -1260,6 +1275,10 @@ export default function PdfVisualViewer({
                                   className={`absolute -top-3 right-0 flex items-center justify-center h-4 px-1.5 rounded-full text-white text-[9px] font-bold shadow-xs whitespace-nowrap pointer-events-none transition-opacity ${
                                     isSelected
                                       ? 'opacity-100 bg-rose-600 ring-1 ring-white'
+                                      : hl.isMissingLine
+                                      ? 'opacity-100 bg-rose-700 ring-1 ring-white'
+                                      : hl.category === 'Extra Line'
+                                      ? 'opacity-100 bg-rose-700 ring-1 ring-white'
                                       : hl.isMissingWord
                                       ? 'opacity-100 bg-rose-700 ring-1 ring-white'
                                       : hl.isColorDiff
@@ -1267,7 +1286,13 @@ export default function PdfVisualViewer({
                                       : 'opacity-0 group-hover:opacity-100 bg-rose-600'
                                   }`}
                                 >
-                                  {hl.isMissingWord ? `^ Missing` : `#${hl.index}`}
+                                  {hl.isMissingLine
+                                    ? `Missing line`
+                                    : hl.category === 'Extra Line'
+                                    ? `Extra line`
+                                    : hl.isMissingWord
+                                    ? `^ Missing`
+                                    : `#${hl.index}`}
                                 </span>
                               )}
 
@@ -1281,7 +1306,7 @@ export default function PdfVisualViewer({
                                         : 'bg-rose-500/30 text-rose-300 border-rose-400/30'
                                     }`}
                                   >
-                                    {isMatch ? '✓ Approved ISI Match' : `#${hl.index} ${hl.category}`}
+                                    {isMatch ? '✓ Complete Line Match' : `#${hl.index} ${hl.category}`}
                                   </span>
                                   {hl.isColorDiff && (
                                     <span className="rounded bg-amber-500/30 text-amber-200 px-1 py-0.5 text-[8px] uppercase border border-amber-400/30">
@@ -1291,8 +1316,8 @@ export default function PdfVisualViewer({
                                 </div>
                                 <div className="text-slate-200 mt-1 leading-snug line-clamp-2">
                                   {isMatch
-                                    ? `Approved text matches Word master: "${hl.target}"`
-                                    : hl.details}
+                                    ? `Complete line matches approved reference standard: "${hl.target}"`
+                                    : hl.details || hl.comment}
                                 </div>
                                 <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1.5 pt-1 border-t border-slate-800">
                                   <span>

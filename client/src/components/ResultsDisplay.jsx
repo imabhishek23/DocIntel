@@ -92,6 +92,8 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
     isiAudit,
     mismatchReport = [],
     isiLineResults = [],
+    isiLineResultsA = [],
+    isiLineResultsB = [],
     isIsiComparison = false,
     isiComplianceScore,
     isiDetectedBlocks = [],
@@ -137,7 +139,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
   const [pdfTotalPages, setPdfTotalPages] = useState(1);
 
   const [activeTab, setActiveTab] = useState(
-    mode === 'compare' ? (isWordToPdf && (mismatchReport.length > 0 || isIsiComparison) ? 'mismatchReport' : 'proofreading') : 'findings'
+    mode === 'compare' ? (isIsiComparison || (isWordToPdf && mismatchReport.length > 0) ? 'mismatchReport' : 'proofreading') : 'findings'
   );
   const [diffView, setDiffView] = useState('slides'); // 'slides' | 'proofread' | 'inline' | 'slider' | 'images'
   const [highlightTarget, setHighlightTarget] = useState('composite'); // 'composite' | 'both'
@@ -667,13 +669,13 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
   const filteredMismatches = useMemo(() => {
     return (mismatchReport || []).filter((item) => {
       if (mismatchFilter !== 'all') {
-        if (mismatchFilter === 'Missing Word' && !(item.errorType === 'Missing Word' || item.isMissingWord)) return false;
-        if (mismatchFilter === 'Extra Word' && !(item.errorType === 'Extra Word' || item.isExtraWord)) return false;
-        if (mismatchFilter === 'Spelling / Word Mismatch' && !(item.errorType?.includes('Spelling') || item.errorType === 'Word Mismatch')) return false;
-        if (mismatchFilter === 'Punctuation' && item.errorType !== 'Punctuation') return false;
-        if (mismatchFilter === 'Capitalization' && item.errorType !== 'Capitalization') return false;
-        if (mismatchFilter === 'Formatting (Bold / Italic)' && !item.errorType?.includes('Formatting')) return false;
-        if (mismatchFilter === 'Spacing' && item.errorType !== 'Spacing') return false;
+        if (mismatchFilter === 'Missing Word' && !(item.errorType?.toLowerCase().includes('missing') || item.isMissingWord)) return false;
+        if (mismatchFilter === 'Extra Word' && !(item.errorType?.toLowerCase().includes('extra') || item.isExtraWord)) return false;
+        if (mismatchFilter === 'Spelling / Word Mismatch' && !(item.errorType?.toLowerCase().includes('spelling') || item.errorType?.toLowerCase().includes('word') || item.errorType?.toLowerCase().includes('changed'))) return false;
+        if (mismatchFilter === 'Punctuation' && !item.errorType?.toLowerCase().includes('punctuation')) return false;
+        if (mismatchFilter === 'Capitalization' && !item.errorType?.toLowerCase().includes('capitalization') && !item.errorType?.toLowerCase().includes('case')) return false;
+        if (mismatchFilter === 'Formatting (Bold / Italic)' && !item.errorType?.toLowerCase().includes('format') && !item.errorType?.toLowerCase().includes('bold') && !item.errorType?.toLowerCase().includes('italic')) return false;
+        if (mismatchFilter === 'Spacing' && !item.errorType?.toLowerCase().includes('spacing')) return false;
       }
       if (mismatchSearchQuery) {
         const q = mismatchSearchQuery.toLowerCase();
@@ -813,21 +815,21 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {/* 1. Similarity / ISI Compliance */}
             <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm flex flex-col justify-center items-center text-center relative overflow-hidden">
-              {isWordToPdf && isIsiComparison && (
+              {isIsiComparison && (
                 <div className="absolute top-2.5 right-2.5 flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[9px] font-extrabold uppercase tracking-wider border border-emerald-300">
                   <Sparkles className="h-2.5 w-2.5 text-emerald-600" />
                   ISI Safety Mode
                 </div>
               )}
               <span className="font-display text-4xl sm:text-5xl font-extrabold text-slate-900 tracking-tight">
-                {isWordToPdf && isIsiComparison && isiComplianceScore !== undefined ? isiComplianceScore : similarity}%
+                {isIsiComparison && isiComplianceScore !== undefined ? isiComplianceScore : similarity}%
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-                {isWordToPdf && isIsiComparison ? 'ISI Compliance Score' : 'Similarity'}
+                {isIsiComparison ? 'ISI Compliance Score' : 'Similarity'}
               </span>
-              {isWordToPdf && isIsiComparison && (
+              {isIsiComparison && (
                 <span className="mt-1 text-[10px] text-slate-500 font-medium">
-                  Word Master Source of Truth (Non-ISI elements ignored)
+                  {isWordToPdf ? 'Word Master' : 'Reference Standard'} Source of Truth (Non-ISI elements ignored)
                 </span>
               )}
             </div>
@@ -838,7 +840,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                 +{wordsAdded}
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-emerald-700">
-                {isWordToPdf && isIsiComparison ? 'Extra Words in ISI' : 'Words Added'}
+                {isIsiComparison ? 'Extra Lines / Words in ISI' : 'Words Added'}
               </span>
             </div>
 
@@ -848,7 +850,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                 -{wordsRemoved}
               </span>
               <span className="mt-2 text-xs font-bold uppercase tracking-wider text-rose-700">
-                {isWordToPdf && isIsiComparison ? 'Missing Words in ISI' : 'Words Removed'}
+                {isIsiComparison ? 'Missing Lines / Words in ISI' : 'Words Removed'}
               </span>
             </div>
           </div>
@@ -1451,7 +1453,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           isAuditTarget={false}
                           isWordToPdf={isWordToPdf}
                           isIsiComparison={isIsiComparison}
-                          isiLineResults={isiLineResults}
+                          isiLineResults={isiLineResultsA && isiLineResultsA.length > 0 ? isiLineResultsA : isiLineResults}
                           scale={pdfZoom}
                           pageNumber={pdfPage}
                           onPageChange={setPdfPage}
@@ -1945,7 +1947,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
         {mode === 'compare' && (
           <>
-            {isWordToPdf && isIsiComparison && (
+            {isIsiComparison && (
               <button
                 onClick={() => setActiveTab('mismatchReport')}
                 className={`flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-semibold transition ${
@@ -2051,8 +2053,8 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
         )}
       </div>
 
-      {/* TAB: Detailed ISI Mismatch Report (Requirement 15) */}
-      {activeTab === 'mismatchReport' && mode === 'compare' && isWordToPdf && (
+      {/* TAB: Detailed ISI Mismatch Report */}
+      {activeTab === 'mismatchReport' && mode === 'compare' && (isWordToPdf || isIsiComparison) && (
         <div className="space-y-4">
           {/* Header Card */}
           <div className="rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-950 via-slate-900 to-indigo-950 p-6 text-white shadow-md">
@@ -2060,10 +2062,10 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
               <div>
                 <div className="flex items-center gap-2">
                   <span className="rounded-md bg-rose-500/30 text-rose-200 border border-rose-400/40 px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide">
-                    Requirement 15 Forensic Report
+                    ISI Line-by-Line Forensic Report
                   </span>
                   <span className="rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-2.5 py-0.5 text-xs font-bold">
-                    Source of Truth: Approved Word Document
+                    Source of Truth: {isWordToPdf ? 'Approved Word Document' : 'Reference ISI Document'}
                   </span>
                 </div>
                 <h3 className="mt-2 text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
@@ -2102,13 +2104,13 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
               <span className="text-xs font-bold text-slate-500 mr-1">Filter:</span>
               {[
                 { id: 'all', label: `All Mismatches (${mismatchReport.length})` },
-                { id: 'Missing Word', label: `⚠ Missing Words (${mismatchReport.filter((m) => m.errorType === 'Missing Word' || m.isMissingWord).length})` },
-                { id: 'Extra Word', label: `+ Extra Words (${mismatchReport.filter((m) => m.errorType === 'Extra Word' || m.isExtraWord).length})` },
-                { id: 'Spelling / Word Mismatch', label: `📝 Spelling (${mismatchReport.filter((m) => m.errorType?.includes('Spelling') || m.errorType === 'Word Mismatch').length})` },
-                { id: 'Punctuation', label: `⸲ Punctuation (${mismatchReport.filter((m) => m.errorType === 'Punctuation').length})` },
-                { id: 'Capitalization', label: `🔤 Capitalization (${mismatchReport.filter((m) => m.errorType === 'Capitalization').length})` },
-                { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.includes('Formatting')).length})` },
-                { id: 'Spacing', label: `␣ Spacing (${mismatchReport.filter((m) => m.errorType === 'Spacing').length})` },
+                { id: 'Missing Word', label: `⚠ Missing Words (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('missing') || m.isMissingWord).length})` },
+                { id: 'Extra Word', label: `+ Extra Words (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('extra') || m.isExtraWord).length})` },
+                { id: 'Spelling / Word Mismatch', label: `📝 Spelling (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('spelling') || m.errorType?.toLowerCase().includes('word') || m.errorType?.toLowerCase().includes('changed')).length})` },
+                { id: 'Punctuation', label: `⸲ Punctuation (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('punctuation')).length})` },
+                { id: 'Capitalization', label: `🔤 Capitalization (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('capitalization') || m.errorType?.toLowerCase().includes('case')).length})` },
+                { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('format') || m.errorType?.toLowerCase().includes('bold') || m.errorType?.toLowerCase().includes('italic')).length})` },
+                { id: 'Spacing', label: `␣ Spacing (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('spacing')).length})` },
               ].map((f) => (
                 <button
                   key={f.id}
@@ -2155,7 +2157,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                     <th className="py-3 px-3 w-20">Page</th>
                     <th className="py-3 px-3 min-w-[140px]">Line / Section</th>
                     <th className="py-3 px-3 min-w-[130px]">Error Type</th>
-                    <th className="py-3 px-4 min-w-[200px]">Original Word Text (Expected)</th>
+                    <th className="py-3 px-4 min-w-[200px]">{isWordToPdf ? 'Original Word Text (Expected)' : 'Reference Text (Expected)'}</th>
                     <th className="py-3 px-4 min-w-[200px]">PDF Text (Found)</th>
                     <th className="py-3 px-3 min-w-[180px]">Discrepancy Details</th>
                     <th className="py-3 px-3 w-24 text-right">Action</th>
