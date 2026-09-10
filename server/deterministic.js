@@ -69,31 +69,46 @@ export function detectProofreadingErrors(textA, textB) {
       .replace(/([^\n])\n([^\n])/g, '$1 $2')
       .replace(/[ \t]+/g, ' ');
 
-  const cleanA = normBreaks((textA || '').replace(/<\/?[bi]\b[^>]*>/gi, ''));
-  const cleanB = normBreaks((textB || '').replace(/<\/?[bi]\b[^>]*>/gi, ''));
+  const cleanA = normBreaks((textA || '').replace(/<[^>]+>/g, ''));
+  const cleanB = normBreaks((textB || '').replace(/<[^>]+>/g, ''));
   const changes = diffWordsWithSpace(cleanA, cleanB);
   const errors = [];
   let errId = 1;
 
-  // Stateful styled token extraction supporting nested <b> and <i> tags
+  // Stateful styled token extraction supporting nested <b>, <i>, and <font> color tags
   const extractStyledTokens = (text) => {
     const tokens = [];
     let isBold = false;
     let isItalic = false;
+    let currentColor = null;
+    let colorCategory = 'black';
 
-    const parts = (text || '').split(/(<\/?[bi]>)/gi);
+    const parts = (text || '').split(/(<\/?[a-zA-Z0-9_-]+(?:\s+[^>]*)?>)/gi);
 
     for (const part of parts) {
+      if (!part) continue;
       const lower = part.toLowerCase();
-      if (lower === '<b>') {
+      if (lower.startsWith('<b') && !lower.startsWith('</b')) {
         isBold = true;
-      } else if (lower === '</b>') {
+      } else if (lower.startsWith('</b')) {
         isBold = false;
-      } else if (lower === '<i>') {
+      } else if (lower.startsWith('<i') && !lower.startsWith('</i')) {
         isItalic = true;
-      } else if (lower === '</i>') {
+      } else if (lower.startsWith('</i')) {
         isItalic = false;
-      } else if (part) {
+      } else if (lower.startsWith('<font') || lower.startsWith('<c') || lower.startsWith('<span')) {
+        const matchRgb = part.match(/color=["']?rgb\((\d+),\s*(\d+),\s*(\d+)\)["']?/i);
+        const matchCat = part.match(/(?:cat|data-cat)=["']?([a-z0-9_-]+)["']?/i);
+        if (matchRgb) {
+          currentColor = [parseInt(matchRgb[1], 10), parseInt(matchRgb[2], 10), parseInt(matchRgb[3], 10)];
+        }
+        if (matchCat) {
+          colorCategory = matchCat[1];
+        }
+      } else if (lower.startsWith('</font') || lower.startsWith('</c') || lower.startsWith('</span')) {
+        currentColor = null;
+        colorCategory = 'black';
+      } else if (!part.startsWith('<')) {
         const words = part.match(/\S+/g);
         if (words) {
           for (const w of words) {
@@ -103,6 +118,8 @@ export function detectProofreadingErrors(textA, textB) {
               clean: w.replace(/^[.,;:!?'"–—\-()\[\]]+|[.,;:!?'"–—\-()\[\]]+$/g, ''),
               isBold,
               isItalic,
+              color: currentColor,
+              colorCategory,
               isSymbolOnly,
             });
           }
@@ -253,7 +270,7 @@ export function detectProofreadingErrors(textA, textB) {
     });
   }
 
-  const cleanText = (val) => (val || '').replace(/<\/?[bi]\b[^>]*>/gi, '').replace(/[<>]/g, '');
+  const cleanText = (val) => (val || '').replace(/<[^>]+>/g, '').replace(/[<>]/g, '');
 
   for (let i = 0; i < changes.length; i++) {
     const curr = changes[i];
@@ -650,8 +667,8 @@ export function computeVisualWordDiff(textA, textB, options = {}) {
   let rightBold = false;
   let rightItalic = false;
 
-  const isTag = (val) => /^<\/?(?:b|i)>$/i.test((val || '').trim());
-  const cleanText = (val) => (val || '').replace(/<\/?(?:b|i)>/gi, '');
+  const isTag = (val) => /^<\/?[a-zA-Z0-9_-]+(?:\s+[^>]*)?>$/i.test((val || '').trim());
+  const cleanText = (val) => (val || '').replace(/<[^>]+>/g, '');
 
   for (let i = 0; i < changes.length; i++) {
     const part = changes[i];
@@ -922,7 +939,7 @@ export function detectIsiBlocks(text, referenceMasterText = '') {
 
   for (let i = 0; i < lines.length; i++) {
     const rawLine = lines[i];
-    const cleanLine = rawLine.replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
+    const cleanLine = rawLine.replace(/<[^>]+>/g, '').trim();
     if (!cleanLine) continue;
 
     // Strict rejection of non-ISI promotional copy & patient cards
@@ -1034,20 +1051,35 @@ function extractStyledTokensHelper(text) {
   const tokens = [];
   let isBold = false;
   let isItalic = false;
+  let currentColor = null;
+  let colorCategory = 'black';
 
-  const parts = (text || '').split(/(<\/?[bi]>)/gi);
+  const parts = (text || '').split(/(<\/?[a-zA-Z0-9_-]+(?:\s+[^>]*)?>)/gi);
 
   for (const part of parts) {
+    if (!part) continue;
     const lower = part.toLowerCase();
-    if (lower === '<b>') {
+    if (lower.startsWith('<b') && !lower.startsWith('</b')) {
       isBold = true;
-    } else if (lower === '</b>') {
+    } else if (lower.startsWith('</b')) {
       isBold = false;
-    } else if (lower === '<i>') {
+    } else if (lower.startsWith('<i') && !lower.startsWith('</i')) {
       isItalic = true;
-    } else if (lower === '</i>') {
+    } else if (lower.startsWith('</i')) {
       isItalic = false;
-    } else if (part) {
+    } else if (lower.startsWith('<font') || lower.startsWith('<c') || lower.startsWith('<span')) {
+      const matchRgb = part.match(/color=["']?rgb\((\d+),\s*(\d+),\s*(\d+)\)["']?/i);
+      const matchCat = part.match(/(?:cat|data-cat)=["']?([a-z0-9_-]+)["']?/i);
+      if (matchRgb) {
+        currentColor = [parseInt(matchRgb[1], 10), parseInt(matchRgb[2], 10), parseInt(matchRgb[3], 10)];
+      }
+      if (matchCat) {
+        colorCategory = matchCat[1];
+      }
+    } else if (lower.startsWith('</font') || lower.startsWith('</c') || lower.startsWith('</span')) {
+      currentColor = null;
+      colorCategory = 'black';
+    } else if (!part.startsWith('<')) {
       const words = part.match(/\S+/g);
       if (words) {
         for (const w of words) {
@@ -1058,6 +1090,8 @@ function extractStyledTokensHelper(text) {
             norm: w.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, ''),
             isBold,
             isItalic,
+            color: currentColor,
+            colorCategory,
             isSymbolOnly,
           });
         }
@@ -1080,7 +1114,7 @@ export function extractCanonicalStatements(textA) {
   let current = '';
 
   for (const rawLine of rawLines) {
-    const clean = rawLine.replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
+    const clean = rawLine.replace(/<[^>]+>/g, '').trim();
     if (!clean) continue;
 
     const isHeading =
@@ -1119,7 +1153,7 @@ export function extractClassifiedLinesFromPdf(textB) {
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    const clean = (raw || '').replace(/<\/?[bi]\b[^>]*>/gi, '').trim();
+    const clean = (raw || '').replace(/<[^>]+>/g, '').trim();
 
     if (COMPOSITE_NON_ISI_LINE_REGEX.test(clean)) {
       inIsi = false;
@@ -1185,7 +1219,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     const stmts = extractCanonicalStatements(textA);
     linesA = stmts.map((stmt, idx) => ({
       raw: stmt,
-      clean: stmt.replace(/<\/?[bi]\b[^>]*>/gi, '').trim(),
+      clean: stmt.replace(/<[^>]+>/g, '').trim(),
       tokens: extractStyledTokensHelper(stmt),
       index: idx,
     }));
@@ -1420,6 +1454,59 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
       // 1. Direct norm match
       if (ct.norm === bt.norm) {
+        // Color difference check (User Requirement: detect and mark color differences in ISI)
+        const catA = ct.colorCategory || 'black';
+        const catB = bt.colorCategory || 'black';
+        const isColorMismatch =
+          catA !== catB &&
+          !(catA === 'black' && catB === 'gray') &&
+          !(catA === 'gray' && catB === 'black');
+
+        if (isColorMismatch) {
+          let groupFoundWords = [bt.raw];
+          let groupExpectedWords = [ct.raw];
+          let nextB = bIdx + 1;
+          let nextC = tokenCursor + 1;
+
+          while (
+            nextB < bTokens.length &&
+            nextC < canonicalTokens.length &&
+            bTokens[nextB].norm === canonicalTokens[nextC].norm &&
+            (bTokens[nextB].colorCategory || 'black') === catB
+          ) {
+            groupFoundWords.push(bTokens[nextB].raw);
+            groupExpectedWords.push(canonicalTokens[nextC].raw);
+            nextB++;
+            nextC++;
+          }
+
+          const foundPhrase = groupFoundWords.join(' ');
+          const expPhrase = groupExpectedWords.join(' ');
+          const foundColorDesc =
+            catB === 'red'
+              ? 'crimson/red'
+              : catB === 'blue'
+              ? 'blue hyperlink'
+              : `${catB}`;
+          const expColorDesc = catA === 'black' ? 'black' : `${catA}`;
+          const issueMsg = `Color mismatch: found ${foundColorDesc} text "${foundPhrase}", expected ${expColorDesc} text`;
+
+          issues.push(issueMsg);
+          wordErrors.push({
+            word: foundPhrase,
+            clean: foundPhrase.replace(/^[.,;:!?'"–—\-()\[\]]+|[.,;:!?'"–—\-()\[\]]+$/g, ''),
+            expected: `${expPhrase} (${expColorDesc} text)`,
+            issue: issueMsg,
+            type: 'color',
+            bStartIdx: bIdx,
+            bEndIdx: nextB,
+          });
+
+          bIdx = nextB;
+          tokenCursor = nextC;
+          continue;
+        }
+
         // Font style difference (Bold / Italic)
         if (bt.isItalic !== ct.isItalic || bt.isBold !== ct.isBold) {
           let groupFoundWords = [bt.raw];
@@ -1658,13 +1745,18 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       });
     } else {
       const comment = issues.join('; ');
+      const cleanLineNoPunct = cleanLine.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '');
+      const isWholeLineError = wordErrors.some(
+        (we) => we.clean && we.clean.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '') === cleanLineNoPunct
+      );
+
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
         lineNum: lIdx + 1,
         text: cleanLine,
         raw: lineB.raw || cleanLine,
-        color: 'green', // Render matching line structure in green, mark only error words in red!
-        status: 'matched_with_word_errors',
+        color: isWholeLineError ? 'red' : 'green', // If whole line is mismatched, mark line in red! Otherwise green line with red word boxes
+        status: isWholeLineError ? 'mismatched' : 'matched_with_word_errors',
         hasWordErrors: true,
         comment,
         issues,

@@ -109,6 +109,35 @@ export async function extractDocumentText(filename, buffer) {
  * subscripts, lists, and layout order.
  */
 /**
+ * Classifies RGB color into high-level categories (black, red, blue, green, gray)
+ */
+function getColorCategory(color) {
+  if (!color || !Array.isArray(color) || color.length < 3) return 'black';
+  const [r, g, b] = color;
+  // If all channels are low and close to each other, it's black/dark neutral
+  if (r < 65 && g < 65 && b < 65 && Math.abs(r - g) < 25 && Math.abs(g - b) < 25) {
+    return 'black';
+  }
+  // If red channel dominates (crimson/red headings)
+  if (r > 120 && r > g * 1.5 && r > b * 1.5) {
+    return 'red';
+  }
+  // If blue channel dominates (hyperlink blue)
+  if (b > 120 && b > r * 1.3) {
+    return 'blue';
+  }
+  // If green dominates
+  if (g > 120 && g > r * 1.3 && g > b * 1.3) {
+    return 'green';
+  }
+  // Neutral gray
+  if (Math.abs(r - g) < 20 && Math.abs(g - b) < 20) {
+    return 'gray';
+  }
+  return `rgb(${r},${g},${b})`;
+}
+
+/**
  * Assembles text items on the same baseline into a clean line string,
  * detecting horizontal gaps between characters/words to preserve spacing.
  */
@@ -140,6 +169,9 @@ function assembleLineItems(lineItems) {
         t = `<b>${t}</b>`;
       } else if (cur.isItalic) {
         t = `<i>${t}</i>`;
+      }
+      if (cur.colorCategory && cur.colorCategory !== 'black') {
+        t = `<font color="rgb(${cur.color.join(',')})" data-cat="${cur.colorCategory}">${t}</font>`;
       }
       lineStr += t;
     }
@@ -175,14 +207,48 @@ async function extractPdfText(buffer) {
 
     for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
       const page = await doc.getPage(pageNum);
-      // Populate font objects in page.commonObjs
-      await page.getOperatorList();
+      // Extract text show ops and their fill colors from operator list
+      const opList = await page.getOperatorList();
+      let currentFill = [0, 0, 0];
+      const colorStack = [];
+      const textOps = [];
+
+      for (let i = 0; i < opList.fnArray.length; i++) {
+        const fn = opList.fnArray[i];
+        const args = opList.argsArray[i];
+
+        if (fn === pdfjs.OPS.save) {
+          colorStack.push([...currentFill]);
+        } else if (fn === pdfjs.OPS.restore) {
+          if (colorStack.length > 0) currentFill = colorStack.pop();
+        } else if (fn === pdfjs.OPS.setFillRGBColor) {
+          currentFill = [args[0], args[1], args[2]];
+        } else if (fn === pdfjs.OPS.setFillGray) {
+          currentFill = [args[0], args[0], args[0]];
+        } else if (fn === pdfjs.OPS.showText || fn === pdfjs.OPS.showSpacedText) {
+          const glyphs = args[0];
+          let str = '';
+          if (fn === pdfjs.OPS.showText) {
+            str = glyphs.map((g) => (g && g.unicode !== undefined ? g.unicode : typeof g === 'string' ? g : '')).join('');
+          } else {
+            str = glyphs
+              .filter((x) => typeof x === 'object' && x && x.unicode !== undefined)
+              .map((x) => x.unicode)
+              .join('');
+          }
+          if (str.trim().length > 0) {
+            textOps.push({ str: str.trim(), color: [...currentFill] });
+          }
+        }
+      }
+
       const textContent = await page.getTextContent();
       const items = textContent.items;
 
       if (!items || items.length === 0) continue;
 
-      // 1. Gather all non-empty text items with font styling
+      // 1. Gather all non-empty text items with font styling & colors
+      let opCursor = 0;
       const itemObjects = [];
       for (const item of items) {
         if (!item.str && item.str !== ' ') continue;
@@ -201,6 +267,33 @@ async function extractPdfText(buffer) {
           if (/italic|oblique/i.test(item.fontName)) isItalic = true;
         }
 
+        const s = (item.str || '').trim();
+        let matchedColor = [0, 0, 0];
+        if (s.length > 0 && textOps.length > 0) {
+          let matchedOpIdx = -1;
+          for (let k = opCursor; k < Math.min(textOps.length, opCursor + 6); k++) {
+            const op = textOps[k];
+            if (op.str === s || op.str.includes(s) || s.includes(op.str)) {
+              matchedColor = op.color;
+              matchedOpIdx = k;
+              break;
+            }
+          }
+          if (matchedOpIdx === -1) {
+            for (let k = 0; k < textOps.length; k++) {
+              const op = textOps[k];
+              if (op.str === s || op.str.includes(s) || s.includes(op.str)) {
+                matchedColor = op.color;
+                matchedOpIdx = k;
+                break;
+              }
+            }
+          }
+          if (matchedOpIdx !== -1) {
+            opCursor = matchedOpIdx + 1;
+          }
+        }
+
         itemObjects.push({
           str: item.str,
           x: item.transform[4],
@@ -209,6 +302,8 @@ async function extractPdfText(buffer) {
           height: item.height || 10,
           isBold,
           isItalic,
+          color: matchedColor,
+          colorCategory: getColorCategory(matchedColor),
         });
       }
 

@@ -190,33 +190,34 @@ function computePageHighlights(
         usedIndices.add(matchedIdx);
         const isMatch = lr.color === 'green' && (!lr.wordErrors || lr.wordErrors.length === 0);
         const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
+        const isLineMatch = lr.color === 'green';
 
-        // 1. Overall Line Highlight (Rendered in Green as the line structure is verified)
+        // 1. Overall Line Highlight (Rendered in Green only if line structure is verified, Red if mismatched)
         highlights.push({
           id: `isi_line_${lr.lineNum || lr.lineIndex}`,
           index: lr.lineNum || lr.lineIndex,
           target: lr.text,
           box: matchedLine.box,
           boxes: [matchedLine.box],
-          isMatch: true,
-          isError: !isMatch && !hasWordErrors,
-          color: isMatch || hasWordErrors ? 'green' : 'red',
+          isMatch: isLineMatch,
+          isError: !isLineMatch,
+          color: isLineMatch ? 'green' : 'red',
           category: isMatch
             ? 'Complete Line Match'
-            : hasWordErrors
+            : hasWordErrors && isLineMatch
             ? 'Line Structure Verified (Word Corrections Marked in Red)'
             : lr.status === 'extra_line'
             ? 'Extra Line'
             : 'Line Discrepancy',
           details: isMatch
             ? '✓ Verified Line Match'
-            : hasWordErrors
+            : hasWordErrors && isLineMatch
             ? `Line structure matches approved reference (${lr.wordErrors.length} specific word correction marked in red)`
             : lr.comment,
           comment: lr.comment,
           expected: lr.expected || lr.text,
           found: lr.found || lr.text,
-          isLineDiscrepancy: !isMatch && !hasWordErrors,
+          isLineDiscrepancy: !isLineMatch,
           isMissingLine: !isMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
         });
 
@@ -259,6 +260,45 @@ function computePageHighlights(
               }
             }
 
+            // Case B2: Multi-item span match (e.g. "Prescribing Information" spanning across items)
+            if (!wordBox && matchedLine.lineItems.length > 1) {
+              const weWords = weWord.toLowerCase().split(/\s+/).filter(Boolean);
+              if (weWords.length >= 2) {
+                const firstW = weWords[0].replace(/[^\w]/g, '');
+                for (let si = 0; si < matchedLine.lineItems.length; si++) {
+                  const sClean = (matchedLine.lineItems[si].str || '').toLowerCase().replace(/[^\w]/g, '');
+                  if (sClean === firstW || sClean.includes(firstW)) {
+                    let accumulated = '';
+                    const spanItems = [];
+                    for (let sj = si; sj < Math.min(matchedLine.lineItems.length, si + weWords.length + 1); sj++) {
+                      spanItems.push(matchedLine.lineItems[sj]);
+                      accumulated += (accumulated ? ' ' : '') + (matchedLine.lineItems[sj].str || '').trim().toLowerCase();
+                      const accClean = accumulated.replace(/[^\w]/g, '');
+                      if (accClean.includes(cleanWeWord)) {
+                        const minX = Math.min(...spanItems.map((m) => m.x));
+                        const minY = Math.min(...spanItems.map((m) => m.y));
+                        const maxX = Math.max(...spanItems.map((m) => m.x + m.w));
+                        const maxY = Math.max(...spanItems.map((m) => m.y + m.h));
+                        wordBox = {
+                          x: Math.round(minX - 1),
+                          y: Math.round(minY - 1),
+                          w: Math.max(14, Math.round(maxX - minX + 2)),
+                          h: Math.max(12, Math.round(maxY - minY + 2)),
+                        };
+                        break;
+                      }
+                    }
+                    if (wordBox) break;
+                  }
+                }
+              }
+            }
+
+            // Case B3: Word error matches full line text
+            if (!wordBox && cleanWeWord === matchedLine.clean) {
+              wordBox = { ...matchedLine.box };
+            }
+
             // Case C: Missing terminal punctuation at line end
             if (!wordBox && (we.type === 'punctuation_missing' || (we.issue && we.issue.includes('missing period')))) {
               const lastItem = matchedLine.lineItems[matchedLine.lineItems.length - 1];
@@ -295,6 +335,8 @@ function computePageHighlights(
                   ? 'Spacing Difference'
                   : we.type === 'formatting'
                   ? 'Bold / Italic Formatting'
+                  : we.type === 'color' || we.type === 'color_mismatch'
+                  ? 'Color Mismatch'
                   : we.type === 'capitalization'
                   ? 'Capitalization Difference'
                   : we.type === 'punctuation_missing' || we.type === 'punctuation'

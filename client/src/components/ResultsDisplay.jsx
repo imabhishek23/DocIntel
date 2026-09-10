@@ -443,6 +443,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
         symbols: errs.filter((e) => e.category === 'Symbols & Trademarks').length,
         formatting: errs.filter((e) => e.category === 'Formatting (Bold / Italic)').length,
         words: errs.filter((e) => e.category === 'Word Mismatch').length,
+        color: errs.filter((e) => e.category === 'Color Mismatch' || (e.type && e.type.includes('color'))).length,
         total: errs.length,
       };
       return { proofreadingErrors: errs, errorSummary: sum };
@@ -659,6 +660,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
           symbols: errors.filter((e) => e.category === 'Symbols & Trademarks').length,
           formatting: errors.filter((e) => e.category === 'Formatting (Bold / Italic)').length,
           words: errors.filter((e) => e.category === 'Word Mismatch').length,
+          color: errors.filter((e) => e.category === 'Color Mismatch' || (e.type && e.type.includes('color'))).length,
           total: errors.length,
         },
       };
@@ -666,7 +668,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
 
     return {
       proofreadingErrors: [],
-      errorSummary: { capitalization: 0, spacing: 0, punctuation: 0, numbers: 0, symbols: 0, formatting: 0, words: 0, total: 0 },
+      errorSummary: { capitalization: 0, spacing: 0, punctuation: 0, numbers: 0, symbols: 0, formatting: 0, words: 0, color: 0, total: 0 },
     };
   }, [result.proofreadingErrors, result.errorSummary, textA, textB]);
 
@@ -707,6 +709,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
         if (mismatchFilter === 'Capitalization' && !item.errorType?.toLowerCase().includes('capitalization') && !item.errorType?.toLowerCase().includes('case')) return false;
         if (mismatchFilter === 'Formatting (Bold / Italic)' && !item.errorType?.toLowerCase().includes('format') && !item.errorType?.toLowerCase().includes('bold') && !item.errorType?.toLowerCase().includes('italic')) return false;
         if (mismatchFilter === 'Spacing' && !item.errorType?.toLowerCase().includes('spacing')) return false;
+        if (mismatchFilter === 'Color Mismatch' && !item.errorType?.toLowerCase().includes('color')) return false;
       }
       if (mismatchSearchQuery) {
         const q = mismatchSearchQuery.toLowerCase();
@@ -2256,6 +2259,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                 { id: 'Capitalization', label: `🔤 Capitalization (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('capitalization') || m.errorType?.toLowerCase().includes('case')).length})` },
                 { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('format') || m.errorType?.toLowerCase().includes('bold') || m.errorType?.toLowerCase().includes('italic')).length})` },
                 { id: 'Spacing', label: `␣ Spacing (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('spacing')).length})` },
+                { id: 'Color Mismatch', label: `🎨 Color (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('color')).length})` },
               ].map((f) => (
                 <button
                   key={f.id}
@@ -2399,6 +2403,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
               { id: 'Numbers & Units', label: `🔢 Numbers (${errorSummary.numbers})` },
               { id: 'Symbols & Trademarks', label: `🔣 Symbols (${errorSummary.symbols})` },
               { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${errorSummary.formatting || 0})` },
+              ...(errorSummary.color ? [{ id: 'Color Mismatch', label: `🎨 Color (${errorSummary.color})` }] : []),
               { id: 'Word Mismatch', label: `📝 Content (${errorSummary.words})` },
             ].map((cat) => (
               <button
