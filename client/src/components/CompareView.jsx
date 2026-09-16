@@ -3,6 +3,7 @@ import UploadZone from './UploadZone';
 import ResultsDisplay from './ResultsDisplay';
 import ErrorBoundary from './ErrorBoundary';
 import { compareDocuments } from '../api';
+import { compressPdfIfNeeded } from '../utils/pdfCompressor';
 import { GitCompare, Sparkles, Loader2, AlertCircle, FileCode } from 'lucide-react';
 
 const SAMPLE_DOC_A = `NON-DISCLOSURE AGREEMENT (ORIGINAL DRAFT)
@@ -126,11 +127,14 @@ export default function CompareView({ onOpenQA }) {
       const imgUrlA = isImgA ? URL.createObjectURL(fileA) : null;
       const imgUrlB = isImgB ? URL.createObjectURL(fileB) : null;
 
+      const uploadFileA = await compressPdfIfNeeded(fileA, 3.2 * 1024 * 1024);
+      const uploadFileB = await compressPdfIfNeeded(fileB, 3.2 * 1024 * 1024);
+
       const data = await compareDocuments({
-        fileA,
+        fileA: uploadFileA,
         textA: fileA ? null : textA,
         nameA: fileA ? fileA.name : (textA.includes('Vandaprex') ? 'Approved Word Master' : 'Original Draft (A)'),
-        fileB,
+        fileB: uploadFileB,
         textB: fileB ? null : textB,
         nameB: fileB ? fileB.name : (textB.includes('Vandaprex') ? 'Promotional PDF Target' : 'Revised Draft (B)'),
       });

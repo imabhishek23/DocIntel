@@ -338,7 +338,8 @@ async function extractPdfText(buffer) {
       if ((!items || items.length < 50) && largeImgObj) {
         console.log(`[PDF] Page ${pageNum} is image-based (${largeImgObj.width}x${largeImgObj.height}, vector items=${items ? items.length : 0}). Running OCR...`);
         if (!ocrWorkerInstance) {
-          ocrWorkerInstance = await createWorker('eng');
+          const cachePath = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : undefined;
+          ocrWorkerInstance = await createWorker('eng', 1, cachePath ? { cachePath } : undefined);
         }
         const scale = 2;
         const { buf: bmpBuf } = createBmpBufferDownsampled(largeImgObj.width, largeImgObj.height, largeImgObj.data, scale);
