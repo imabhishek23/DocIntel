@@ -4,6 +4,7 @@ import ResultsDisplay from './ResultsDisplay';
 import ErrorBoundary from './ErrorBoundary';
 import { compareDocuments } from '../api';
 import { compressPdfIfNeeded } from '../utils/pdfCompressor';
+import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
 import { GitCompare, Sparkles, Loader2, AlertCircle, FileCode } from 'lucide-react';
 
 const SAMPLE_DOC_A = `NON-DISCLOSURE AGREEMENT (ORIGINAL DRAFT)
@@ -127,15 +128,29 @@ export default function CompareView({ onOpenQA }) {
       const imgUrlA = isImgA ? URL.createObjectURL(fileA) : null;
       const imgUrlB = isImgB ? URL.createObjectURL(fileB) : null;
 
+      let extractedTextA = null;
+      let extractedTextB = null;
+
+      if (isPdfA) {
+        try {
+          extractedTextA = await extractPdfTextInBrowser(fileA);
+        } catch (_) {}
+      }
+      if (isPdfB) {
+        try {
+          extractedTextB = await extractPdfTextInBrowser(fileB);
+        } catch (_) {}
+      }
+
       const uploadFileA = await compressPdfIfNeeded(fileA, 3.2 * 1024 * 1024);
       const uploadFileB = await compressPdfIfNeeded(fileB, 3.2 * 1024 * 1024);
 
       const data = await compareDocuments({
         fileA: uploadFileA,
-        textA: fileA ? null : textA,
+        textA: extractedTextA || (fileA ? null : textA),
         nameA: fileA ? fileA.name : (textA.includes('Vandaprex') ? 'Approved Word Master' : 'Original Draft (A)'),
         fileB: uploadFileB,
-        textB: fileB ? null : textB,
+        textB: extractedTextB || (fileB ? null : textB),
         nameB: fileB ? fileB.name : (textB.includes('Vandaprex') ? 'Promotional PDF Target' : 'Revised Draft (B)'),
       });
 

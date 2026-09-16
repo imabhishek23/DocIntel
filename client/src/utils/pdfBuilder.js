@@ -89,3 +89,4 @@ export function buildPdfFromJpegs(jpegItems) {
 
   return new Blob(chunks, { type: 'application/pdf' });
 }
+

@@ -1189,6 +1189,11 @@ export function extractClassifiedLinesFromPdf(textB) {
       continue;
     }
 
+    if (/^(?:<b>\s*)?(?:[A-Z0-9\s-]+\|\s*IMPORTANT SAFETY INFORMATION)/i.test(clean)) {
+      inIsi = true;
+      continue;
+    }
+
     if (COMPOSITE_ISI_START_REGEX.test(cleanRaw) || COMPOSITE_ISI_START_REGEX.test(clean)) {
       inIsi = true;
     }
@@ -1364,6 +1369,20 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         found: cleanLine,
         section: 'Important Safety Information',
       });
+      // Advance cCursor past any matching continuation header in canonical reference
+      for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 25); searchPos++) {
+        const refLineIdx = canonicalTokens[searchPos].refLineIndex;
+        const refLineClean = linesA[refLineIdx]?.clean || '';
+        if (/important safety information\s*\(?cont['’]?d\)?/i.test(refLineClean) || /^\(?cont['’]?d\)?$/i.test(refLineClean)) {
+          let nextP = searchPos;
+          while (nextP < canonicalTokens.length && canonicalTokens[nextP].refLineIndex === refLineIdx) {
+            nextP++;
+          }
+          cCursor = nextP;
+          lastConsumedRefLine = refLineIdx;
+          break;
+        }
+      }
       continue;
     }
 
@@ -1432,11 +1451,14 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     const compareLen = Math.min(bNorm.length, 6);
     const subseqNorm = bNorm.slice(0, compareLen);
     const ratioAtCursor = computeSubsequenceFuzzyScore(canonicalTokens, cCursor, subseqNorm);
-    // If bNorm is a single word and cCursor is available, stay at cCursor unless distant match is an exact heading
-    if (ratioAtCursor >= 0.35 || (compareLen === 1 && (ratioAtCursor > 0 || cCursor < canonicalTokens.length))) {
+    if (ratioAtCursor >= 0.85) {
       bestStart = cCursor;
-      bestScore = Math.max(ratioAtCursor, 0.4);
+      bestScore = ratioAtCursor;
     } else {
+      if (ratioAtCursor >= 0.35 || (compareLen === 1 && ratioAtCursor > 0)) {
+        bestStart = cCursor;
+        bestScore = ratioAtCursor;
+      }
       for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 80); searchPos++) {
         // Guard: short lines (<= 2 tokens) cannot jump far ahead without an exact match
         if (bNorm.length <= 2 && (searchPos - cCursor > 4)) {
@@ -1455,7 +1477,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         const rawScore = computeSubsequenceFuzzyScore(canonicalTokens, searchPos, subseqNorm);
         const distPenalty = (searchPos - cCursor) * 0.015;
         const weightedScore = rawScore - distPenalty;
-        if (rawScore >= 0.4 && weightedScore > bestScore) {
+        if (rawScore >= 0.4 && (weightedScore > bestScore || (rawScore === 1 && searchPos > cCursor && bestScore < 0.9))) {
           bestScore = weightedScore;
           bestStart = searchPos;
           if (rawScore === 1 && searchPos === cCursor) break;

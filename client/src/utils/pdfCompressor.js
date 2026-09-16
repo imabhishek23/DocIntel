@@ -76,3 +76,4 @@ export async function compressPdfIfNeeded(file, maxSizeBytes = 3.2 * 1024 * 1024
     return file;
   }
 }
+

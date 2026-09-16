@@ -224,34 +224,35 @@ function computePageHighlights(
       const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
       const isLineMatch = lr.color === 'green';
 
-      // 1. Overall Line Highlight (Rendered in Green only if line structure is verified, Red if mismatched)
-      highlights.push({
-        id: `isi_line_${lr.lineNum || lr.lineIndex}`,
-        index: lr.lineNum || lr.lineIndex,
-        target: lr.text,
-        box: safeLineBox,
-        boxes: [safeLineBox],
-        isMatch: isLineMatch,
-        isError: !isLineMatch,
-        color: isLineMatch ? 'green' : 'red',
-        category: isMatch
-          ? 'Complete Line Match'
-          : hasWordErrors && isLineMatch
-          ? 'Line Structure Verified (Word Corrections Marked in Red)'
-          : lr.status === 'extra_line'
-          ? 'Extra Line'
-          : 'Line Discrepancy',
-        details: isMatch
-          ? '✓ Verified Line Match'
-          : hasWordErrors && isLineMatch
-          ? `Line structure matches approved reference (${lr.wordErrors.length} specific word correction marked in red)`
-          : lr.comment,
-        comment: lr.comment,
-        expected: lr.expected || lr.text,
-        found: lr.found || lr.text,
-        isLineDiscrepancy: !isLineMatch,
-        isMissingLine: !isMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
-      });
+      // 1. Overall Line Highlight:
+      // - If line is mismatched / extra / missing: push RED line highlight
+      // - If line is 100% matched with NO word errors: push GREEN line highlight
+      // - If line has specific word errors: DO NOT push a green full-line box (avoid cluttering the page!)
+      if (!isLineMatch || !hasWordErrors) {
+        highlights.push({
+          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
+          index: lr.lineNum || lr.lineIndex,
+          target: lr.text,
+          box: safeLineBox,
+          boxes: [safeLineBox],
+          isMatch: isMatch,
+          isError: !isLineMatch,
+          color: isLineMatch ? 'green' : 'red',
+          category: isMatch
+            ? 'Complete Line Match'
+            : lr.status === 'extra_line'
+            ? 'Extra Line'
+            : 'Line Discrepancy',
+          details: isMatch
+            ? '✓ Verified Line Match'
+            : lr.comment,
+          comment: lr.comment,
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+          isLineDiscrepancy: !isLineMatch,
+          isMissingLine: !isLineMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
+        });
+      }
 
       // 2. Word-Level Red Highlights (User Requirement: "any error mark red")
       if (hasWordErrors) {
@@ -875,7 +876,7 @@ export default function PdfVisualViewer({
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pageHighlights, setPageHighlights] = useState([]);
   const [selectedError, setSelectedError] = useState(null);
-  const [highlightFilter, setHighlightFilter] = useState('all'); // 'all' | 'errors' | 'matches'
+  const [highlightFilter, setHighlightFilter] = useState('errors'); // default to showing only errors
   const [copiedText, setCopiedText] = useState(false);
   const [canvasDimensions, setCanvasDimensions] = useState({ width: 0, height: 0 });
 
@@ -1268,17 +1269,6 @@ export default function PdfVisualViewer({
             <div className="flex items-center gap-1 bg-white/90 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold">
               <button
                 type="button"
-                onClick={() => setHighlightFilter('all')}
-                className={`px-2 py-0.5 rounded transition cursor-pointer ${
-                  highlightFilter === 'all'
-                    ? 'bg-slate-800 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                All Overlays
-              </button>
-              <button
-                type="button"
                 onClick={() => setHighlightFilter('errors')}
                 className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
                   highlightFilter === 'errors'
@@ -1286,7 +1276,7 @@ export default function PdfVisualViewer({
                     : 'text-rose-700 hover:bg-rose-100'
                 }`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
                 Red Errors ({discrepancies.length})
               </button>
               <button
@@ -1298,8 +1288,19 @@ export default function PdfVisualViewer({
                     : 'text-emerald-700 hover:bg-emerald-100'
                 }`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
                 Green Matches ({pageHighlights.filter((h) => h.isMatch).length || matchingTokens.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setHighlightFilter('all')}
+                className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                  highlightFilter === 'all'
+                    ? 'bg-slate-800 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All Overlays
               </button>
             </div>
           )}

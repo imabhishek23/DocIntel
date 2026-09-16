@@ -44,17 +44,19 @@ export async function compareDocuments({ fileA, textA, nameA, fileB, textB, name
 
   if (fileA) {
     formData.append('documentA', fileA);
-  } else if (textA) {
-    formData.append('textA', textA);
-    if (nameA) formData.append('nameA', nameA);
   }
+  if (textA) {
+    formData.append('textA', textA);
+  }
+  if (nameA) formData.append('nameA', nameA);
 
   if (fileB) {
     formData.append('documentB', fileB);
-  } else if (textB) {
-    formData.append('textB', textB);
-    if (nameB) formData.append('nameB', nameB);
   }
+  if (textB) {
+    formData.append('textB', textB);
+  }
+  if (nameB) formData.append('nameB', nameB);
 
   const res = await fetch(`${API_BASE}/compare`, {
     method: 'POST',
