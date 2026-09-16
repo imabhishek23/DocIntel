@@ -876,7 +876,7 @@ export default function PdfVisualViewer({
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pageHighlights, setPageHighlights] = useState([]);
   const [selectedError, setSelectedError] = useState(null);
-  const [highlightFilter, setHighlightFilter] = useState('errors'); // default to showing only errors
+  const [highlightFilter, setHighlightFilter] = useState('all'); // 'all' (Green Matches + Red Errors) | 'errors' | 'matches'
   const [copiedText, setCopiedText] = useState(false);
   const [canvasDimensions, setCanvasDimensions] = useState({ width: 0, height: 0 });
 
