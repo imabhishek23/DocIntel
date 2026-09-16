@@ -5,6 +5,8 @@ import mammoth from 'mammoth';
 import path from 'node:path';
 import { createWorker } from 'tesseract.js';
 
+let ocrWorkerInstance = null;
+
 /**
  * Extracts clean textual content from uploaded file buffers.
  * Supported formats: .pdf, .docx, .txt, .md, .csv, .json, images
@@ -118,6 +120,10 @@ function getColorCategory(color) {
   if (r < 65 && g < 65 && b < 65 && Math.abs(r - g) < 25 && Math.abs(g - b) < 25) {
     return 'black';
   }
+  // Purple / violet headings (e.g. APRETUDE headers: r ~ 110, b ~ 160, g < 75)
+  if (r > 70 && b > 85 && (r + b) > g * 2.2) {
+    return 'purple';
+  }
   // If red channel dominates (crimson/red headings)
   if (r > 120 && r > g * 1.5 && r > b * 1.5) {
     return 'red';
@@ -185,6 +191,77 @@ function assembleLineItems(lineItems) {
     .trim();
 }
 
+function createBmpBufferDownsampled(origW, origH, rgbData, scale = 2) {
+  const newW = Math.floor(origW / scale);
+  const newH = Math.floor(origH / scale);
+  const bytesPerPixel = 3;
+  const rowStride = newW * bytesPerPixel;
+  const padding = (4 - (rowStride % 4)) % 4;
+  const paddedRowStride = rowStride + padding;
+  const pixelDataSize = paddedRowStride * newH;
+  const fileSize = 54 + pixelDataSize;
+
+  const buf = Buffer.alloc(fileSize);
+  buf.write('BM', 0);
+  buf.writeUInt32LE(fileSize, 2);
+  buf.writeUInt32LE(54, 10);
+  buf.writeUInt32LE(40, 14);
+  buf.writeInt32LE(newW, 18);
+  buf.writeInt32LE(newH, 22);
+  buf.writeUInt16LE(1, 26);
+  buf.writeUInt16LE(24, 28);
+  buf.writeUInt32LE(0, 30);
+  buf.writeUInt32LE(pixelDataSize, 34);
+  buf.writeInt32LE(2835, 38);
+  buf.writeInt32LE(2835, 42);
+
+  const origRowStride = origW * bytesPerPixel;
+  let offset = 54;
+  for (let y = newH - 1; y >= 0; y--) {
+    const srcY = y * scale;
+    const srcOffset = srcY * origRowStride;
+    for (let x = 0; x < newW; x++) {
+      const srcX = x * scale;
+      const pSrc = srcOffset + srcX * 3;
+      buf[offset++] = rgbData[pSrc + 2];
+      buf[offset++] = rgbData[pSrc + 1];
+      buf[offset++] = rgbData[pSrc];
+    }
+    for (let p = 0; p < padding; p++) buf[offset++] = 0;
+  }
+  return { buf, width: newW, height: newH };
+}
+
+function sampleColorFromImage(imgObj, imgX, imgY) {
+  const width = imgObj.width;
+  const height = imgObj.height;
+  const data = imgObj.data;
+  let minLum = 999;
+  let bestRgb = [0, 0, 0];
+
+  const startX = Math.max(0, imgX - 6);
+  const endX = Math.min(width - 1, imgX + 6);
+  const startY = Math.max(0, imgY - 6);
+  const endY = Math.min(height - 1, imgY + 6);
+
+  for (let y = startY; y <= endY; y++) {
+    const rowOffset = y * width * 3;
+    for (let x = startX; x <= endX; x++) {
+      const p = rowOffset + x * 3;
+      const r = data[p];
+      const g = data[p + 1];
+      const b = data[p + 2];
+      if (r > 225 && g > 225 && b > 225) continue;
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (lum < minLum) {
+        minLum = lum;
+        bestRgb = [r, g, b];
+      }
+    }
+  }
+  return bestRgb;
+}
+
 /**
  * Extracts structured text from PDF using modern pdfjs-dist engine.
  * Groups items into lines by baseline Y coordinate, preserving superscripts,
@@ -212,12 +289,24 @@ async function extractPdfText(buffer) {
       let currentFill = [0, 0, 0];
       const colorStack = [];
       const textOps = [];
+      let currentTransform = null;
+      let largeImgObj = null;
+      let imgTransform = null;
 
       for (let i = 0; i < opList.fnArray.length; i++) {
         const fn = opList.fnArray[i];
         const args = opList.argsArray[i];
 
-        if (fn === pdfjs.OPS.save) {
+        if (fn === pdfjs.OPS.transform) {
+          currentTransform = args;
+        } else if (fn === pdfjs.OPS.paintImageXObject) {
+          const name = args[0];
+          const img = page.objs.get(name);
+          if (img && img.width >= 500 && img.height >= 500) {
+            largeImgObj = img;
+            imgTransform = currentTransform;
+          }
+        } else if (fn === pdfjs.OPS.save) {
           colorStack.push([...currentFill]);
         } else if (fn === pdfjs.OPS.restore) {
           if (colorStack.length > 0) currentFill = colorStack.pop();
@@ -245,7 +334,59 @@ async function extractPdfText(buffer) {
       const textContent = await page.getTextContent();
       const items = textContent.items;
 
-      if (!items || items.length === 0) continue;
+      // Check if page is image-based or scanned (fewer than 50 vector text items but has large image)
+      if ((!items || items.length < 50) && largeImgObj) {
+        console.log(`[PDF] Page ${pageNum} is image-based (${largeImgObj.width}x${largeImgObj.height}, vector items=${items ? items.length : 0}). Running OCR...`);
+        if (!ocrWorkerInstance) {
+          ocrWorkerInstance = await createWorker('eng');
+        }
+        const scale = 2;
+        const { buf: bmpBuf } = createBmpBufferDownsampled(largeImgObj.width, largeImgObj.height, largeImgObj.data, scale);
+        const ret = await ocrWorkerInstance.recognize(bmpBuf, {}, { text: true, blocks: true });
+
+        const scaleX = imgTransform ? imgTransform[0] : page.view[2];
+        const scaleY = imgTransform ? imgTransform[3] : page.view[3];
+        const transX = imgTransform ? imgTransform[4] : 0;
+        const transY = imgTransform ? imgTransform[5] : 0;
+
+        const pageLines = [];
+        ret.data.blocks?.forEach((b) => {
+          b.paragraphs?.forEach((p) => {
+            p.lines?.forEach((l) => {
+              const lineText = l.text.trim();
+              if (!lineText) return;
+
+              const x0 = l.bbox.x0 * scale;
+              const y0 = l.bbox.y0 * scale;
+              const x1 = l.bbox.x1 * scale;
+              const y1 = l.bbox.y1 * scale;
+
+              const pdfX = Math.round(transX + (x0 / largeImgObj.width) * scaleX);
+              const pdfY = Math.round(transY + ((largeImgObj.height - y1) / largeImgObj.height) * scaleY);
+              const pdfW = Math.round(((x1 - x0) / largeImgObj.width) * scaleX);
+              const pdfH = Math.round(((y1 - y0) / largeImgObj.height) * scaleY);
+
+              const cx = Math.floor((x0 + x1) / 2);
+              const cy = Math.floor((y0 + y1) / 2);
+              const sampled = sampleColorFromImage(largeImgObj, cx, cy);
+              const cat = getColorCategory(sampled);
+
+              let taggedText = lineText;
+              if (cat !== 'black') {
+                taggedText = `<font color="rgb(${sampled.join(',')})" data-cat="${cat}">${lineText}</font>`;
+              }
+              taggedText += ` <!-- BOX:{"x":${pdfX},"y":${pdfY},"w":${pdfW},"h":${pdfH},"page":${pageNum}} -->`;
+              pageLines.push(taggedText);
+            });
+          });
+        });
+
+        const pageText = pageLines.join('\n').trim();
+        if (pageText) {
+          fullText += `<!-- PAGE ${pageNum} -->\n` + pageText + '\n\n';
+        }
+        continue;
+      }
 
       // 1. Gather all non-empty text items with font styling & colors
       let opCursor = 0;
@@ -359,7 +500,7 @@ async function extractPdfText(buffer) {
 
       const pageText = pageLines.join('\n').trim();
       if (pageText) {
-        fullText += pageText + '\n\n';
+        fullText += `<!-- PAGE ${pageNum} -->\n` + pageText + '\n\n';
       }
     }
   } catch (pdfjsErr) {
@@ -391,8 +532,6 @@ function normalizeText(text) {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
-
-let ocrWorkerInstance = null;
 
 export async function extractImageText(buffer) {
   try {

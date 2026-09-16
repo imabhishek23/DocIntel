@@ -1048,13 +1048,14 @@ function levenshteinDist(a, b) {
 }
 
 function extractStyledTokensHelper(text) {
+  const strippedText = (text || '').replace(/<!--[\s\S]*?-->/g, '');
   const tokens = [];
   let isBold = false;
   let isItalic = false;
   let currentColor = null;
   let colorCategory = 'black';
 
-  const parts = (text || '').split(/(<\/?[a-zA-Z0-9_-]+(?:\s+[^>]*)?>)/gi);
+  const parts = strippedText.split(/(<\/?[a-zA-Z0-9_-]+(?:\s+[^>]*)?>)/gi);
 
   for (const part of parts) {
     if (!part) continue;
@@ -1137,10 +1138,10 @@ export function extractCanonicalStatements(textA) {
 }
 
 const COMPOSITE_NON_ISI_LINE_REGEX =
-  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional)/i;
+  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|Additional\s+Important\s+Safety\s+Information|continued\s+b[ea]low|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
 
 const COMPOSITE_ISI_START_REGEX =
-  /^(?:<b>\s*)?(?:IMMUNOVA\s*\|\s*IMPORTANT SAFETY INFORMATION|AEROVIA\s*\|\s*IMPORTANT SAFETY INFORMATION|Prescribing Information|Indication|Important Safety Information|Selected Important Safety Information|Important Safety Information \(cont[’']?d\)|References)/i;
+  /^(?:<b>\s*)?(?:IMMUNOVA\s*\|\s*IMPORTANT SAFETY INFORMATION|AEROVIA\s*\|\s*IMPORTANT SAFETY INFORMATION|Prescribing\s+Information$|Indication$|Indication\b|Important\s+Safety\s+Information|Selected\s+Important\s+Safety\s+Information|Important\s+Safety\s+Information\s*\(cont[’']?d\))/i;
 
 /**
  * Extracts both ISI and Non-ISI marketing lines from Composite PDF B or Reference Document A.
@@ -1150,32 +1151,56 @@ export function extractClassifiedLinesFromPdf(textB) {
   const isiLines = [];
   const nonIsiLines = [];
   let inIsi = false;
+  let currentPage = 1;
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i];
-    const clean = (raw || '').replace(/<[^>]+>/g, '').trim();
+
+    const pageMatch = raw.match(/<!--\s*PAGE\s*(\d+)\s*-->/i);
+    if (pageMatch) {
+      currentPage = parseInt(pageMatch[1], 10);
+      continue;
+    }
+
+    const boxMatch = raw.match(/<!--\s*BOX:(.*?)\s*-->/);
+    let box = null;
+    if (boxMatch) {
+      try {
+        box = JSON.parse(boxMatch[1]);
+      } catch (_) {}
+    }
+
+    const cleanRaw = (raw || '').replace(/<!--[\s\S]*?-->/g, '').trim();
+    const clean = cleanRaw.replace(/<[^>]+>/g, '').trim();
+    if (!clean) continue;
+
+    const linePage = (box && box.page) ? box.page : currentPage;
 
     if (COMPOSITE_NON_ISI_LINE_REGEX.test(clean)) {
       inIsi = false;
       nonIsiLines.push({
-        raw,
+        raw: cleanRaw,
         clean,
         index: i,
-        tokens: extractStyledTokensHelper(raw),
+        page: linePage,
+        box,
+        tokens: extractStyledTokensHelper(cleanRaw),
       });
       continue;
     }
 
-    if (COMPOSITE_ISI_START_REGEX.test(raw) || COMPOSITE_ISI_START_REGEX.test(clean)) {
+    if (COMPOSITE_ISI_START_REGEX.test(cleanRaw) || COMPOSITE_ISI_START_REGEX.test(clean)) {
       inIsi = true;
     }
 
     if (inIsi) {
       isiLines.push({
-        raw,
+        raw: cleanRaw,
         clean,
         index: i,
-        tokens: extractStyledTokensHelper(raw),
+        page: linePage,
+        box,
+        tokens: extractStyledTokensHelper(cleanRaw),
       });
 
       if (/is not approved promotional material\.?$/i.test(clean) || /For editorial QA training only/i.test(clean)) {
@@ -1183,10 +1208,12 @@ export function extractClassifiedLinesFromPdf(textB) {
       }
     } else {
       nonIsiLines.push({
-        raw,
+        raw: cleanRaw,
         clean,
         index: i,
-        tokens: extractStyledTokensHelper(raw),
+        page: linePage,
+        box,
+        tokens: extractStyledTokensHelper(cleanRaw),
       });
     }
   }
@@ -1199,6 +1226,34 @@ export function extractClassifiedLinesFromPdf(textB) {
  */
 export function extractIsiLinesFromPdf(textB) {
   return extractClassifiedLinesFromPdf(textB).isiLines;
+}
+
+
+
+function computeSubsequenceFuzzyScore(cTokens, cStart, bNorm) {
+  let cIdx = cStart;
+  let matches = 0;
+  for (let bIdx = 0; bIdx < bNorm.length; bIdx++) {
+    const bt = bNorm[bIdx];
+    for (let offset = 0; offset <= 2 && cIdx + offset < cTokens.length; offset++) {
+      if (tokensFuzzyMatch(cTokens[cIdx + offset].norm, bt)) {
+        matches++;
+        cIdx += offset + 1;
+        break;
+      }
+    }
+  }
+  return bNorm.length > 0 ? matches / bNorm.length : 0;
+}
+
+function tokensFuzzyMatch(cNorm, bNorm) {
+  if (!cNorm || !bNorm) return false;
+  if (cNorm === bNorm) return true;
+  if (cNorm.includes(bNorm) || bNorm.includes(cNorm)) return true;
+  const maxLen = Math.max(cNorm.length, bNorm.length);
+  const maxDist = maxLen >= 8 ? 3 : 2;
+  if (levenshteinDist(cNorm, bNorm) <= maxDist) return true;
+  return false;
 }
 
 function normalizeTokenStr(w) {
@@ -1257,6 +1312,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     lineNum: idx + 1,
     text: l.clean,
     raw: l.raw,
+    page: l.page || 1,
+    box: l.box || null,
     color: 'green',
     status: 'matched',
     comment: 'Complete line match',
@@ -1270,11 +1327,45 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
   const matchingTokens = [];
   let tokenIdx = 1;
 
+  let prevPage = -1;
   for (let lIdx = 0; lIdx < linesB.length; lIdx++) {
     const lineB = linesB[lIdx];
+    const linePageNum = lineB.page || 1;
+    if (prevPage !== -1 && linePageNum !== prevPage) {
+      cCursor = 0;
+      lastConsumedRefLine = -1;
+    }
+    prevPage = linePageNum;
     const cleanLine = typeof lineB === 'string' ? lineB : (lineB.clean || '');
     const bTokens = lineB.tokens || extractStyledTokensHelper(lineB.raw || cleanLine);
     const bNorm = bTokens.map((t) => t.norm);
+
+    // Continuation marker: e.g. "(cont'd)" or "IMPORTANT SAFETY INFORMATION (cont'd)"
+    const nextLineObj = lIdx + 1 < linesB.length ? linesB[lIdx + 1] : null;
+    const nextLineClean = nextLineObj ? (typeof nextLineObj === 'string' ? nextLineObj : nextLineObj.clean) : '';
+    const isNextContd = /^\(?cont['’]?d\)?$/i.test(nextLineClean);
+
+    if (
+      /^\(?cont['’]?d\)?$/i.test(cleanLine) ||
+      /^IMPORTANT SAFETY INFORMATION\s*\(?cont['’]?d\)?$/i.test(cleanLine) ||
+      (/^IMPORTANT SAFETY INFORMATION$/i.test(cleanLine) && isNextContd)
+    ) {
+      isiLineResultsB.push({
+        lineIndex: lIdx + 1,
+        lineNum: lIdx + 1,
+        text: cleanLine,
+        raw: lineB.raw || cleanLine,
+        page: lineB.page || 1,
+        box: lineB.box || null,
+        color: 'green',
+        status: 'matched',
+        comment: 'Continuation Header',
+        expected: cleanLine,
+        found: cleanLine,
+        section: 'Important Safety Information',
+      });
+      continue;
+    }
 
     // Case 1: Bullet-only line with missing text
     if (cleanLine === '•' || cleanLine === '-' || cleanLine === '*') {
@@ -1288,6 +1379,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         lineNum: lIdx + 1,
         text: cleanLine,
         raw: lineB.raw || cleanLine,
+        page: lineB.page || 1,
+        box: lineB.box || null,
         color: 'red',
         status: 'mismatched',
         comment,
@@ -1305,7 +1398,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       mismatchReport.push({
         index: mismatchReport.length + 1,
         id: `line_err_${lIdx + 1}`,
-        page: 1,
+        page: lineB.page || 1,
         section: 'Important Safety Information',
         originalWordText: cleanMissing,
         pdfText: cleanLine,
@@ -1331,26 +1424,66 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       continue;
     }
 
-    // Find best match in canonical tokens starting strictly forward from cCursor (Requirement 9: maintain sequence order)
+    // Find best match in canonical tokens starting strictly forward from cCursor
     let bestStart = -1;
     let bestScore = 0;
 
-    for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 60); searchPos++) {
-      let matchCount = 0;
-      const compareLen = Math.min(bNorm.length, 6);
-      for (let k = 0; k < compareLen; k++) {
-        if (searchPos + k < canonicalTokens.length) {
-          const cTok = canonicalTokens[searchPos + k];
-          if (cTok.norm === bNorm[k] || (cTok.norm && bNorm[k] && (cTok.norm.includes(bNorm[k]) || bNorm[k].includes(cTok.norm)))) {
-            matchCount++;
+    // First, test if cCursor is already the continuous match (sequence continuity)
+    const compareLen = Math.min(bNorm.length, 6);
+    const subseqNorm = bNorm.slice(0, compareLen);
+    const ratioAtCursor = computeSubsequenceFuzzyScore(canonicalTokens, cCursor, subseqNorm);
+    // If bNorm is a single word and cCursor is available, stay at cCursor unless distant match is an exact heading
+    if (ratioAtCursor >= 0.35 || (compareLen === 1 && (ratioAtCursor > 0 || cCursor < canonicalTokens.length))) {
+      bestStart = cCursor;
+      bestScore = Math.max(ratioAtCursor, 0.4);
+    } else {
+      for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 80); searchPos++) {
+        // Guard: short lines (<= 2 tokens) cannot jump far ahead without an exact match
+        if (bNorm.length <= 2 && (searchPos - cCursor > 4)) {
+          // Only allowed if all tokens match exactly
+          let exactAll = true;
+          for (let k = 0; k < bNorm.length; k++) {
+            if (searchPos + k >= canonicalTokens.length || canonicalTokens[searchPos + k].norm !== bNorm[k]) {
+              exactAll = false;
+              break;
+            }
           }
+          if (!exactAll) continue;
+        }
+
+        // Subsequence matching allows for split words or extra words without de-synchronizing
+        const rawScore = computeSubsequenceFuzzyScore(canonicalTokens, searchPos, subseqNorm);
+        const distPenalty = (searchPos - cCursor) * 0.015;
+        const weightedScore = rawScore - distPenalty;
+        if (rawScore >= 0.4 && weightedScore > bestScore) {
+          bestScore = weightedScore;
+          bestStart = searchPos;
+          if (rawScore === 1 && searchPos === cCursor) break;
         }
       }
-      const score = matchCount / compareLen;
-      if (score > bestScore && score >= 0.5) {
-        bestScore = score;
-        bestStart = searchPos;
-        if (score === 1) break;
+    }
+
+    if (bestStart === -1 && cCursor > 10) {
+      // Check if document restarts ISI section from beginning (e.g. Desktop layout following Mobile layout)
+      for (let searchPos = 0; searchPos < Math.min(canonicalTokens.length, 30); searchPos++) {
+        let matchCount = 0;
+        const compareLen = Math.min(bNorm.length, 6);
+        for (let k = 0; k < compareLen; k++) {
+          if (searchPos + k < canonicalTokens.length) {
+            const cTok = canonicalTokens[searchPos + k];
+            if (cTok.norm === bNorm[k] || (cTok.norm && bNorm[k] && (cTok.norm.includes(bNorm[k]) || bNorm[k].includes(cTok.norm)))) {
+              matchCount++;
+            }
+          }
+        }
+        const score = matchCount / compareLen;
+        if (score > bestScore && score >= 0.5) {
+          bestScore = score;
+          bestStart = searchPos;
+          cCursor = searchPos;
+          lastConsumedRefLine = -1;
+          if (score === 1) break;
+        }
       }
     }
 
@@ -1361,6 +1494,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         lineNum: lIdx + 1,
         text: cleanLine,
         raw: lineB.raw || cleanLine,
+        page: lineB.page || 1,
+        box: lineB.box || null,
         color: 'red',
         status: 'extra_line',
         comment: 'Extra line',
@@ -1372,7 +1507,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       mismatchReport.push({
         index: mismatchReport.length + 1,
         id: `line_err_${lIdx + 1}`,
-        page: 1,
+        page: lineB.page || 1,
         section: 'Important Safety Information',
         originalWordText: '(none - extra in Composite PDF)',
         pdfText: cleanLine,
@@ -1405,7 +1540,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         mismatchReport.push({
           index: mismatchReport.length + 1,
           id: `missing_ref_${skippedRef + 1}`,
-          page: 1,
+          page: linesA[skippedRef]?.page || 1,
           section: 'Important Safety Information',
           originalWordText: linesA[skippedRef].clean,
           pdfText: '(missing in Composite PDF)',
@@ -1735,6 +1870,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         lineNum: lIdx + 1,
         text: cleanLine,
         raw: lineB.raw || cleanLine,
+        page: lineB.page || 1,
+        box: lineB.box || null,
         color: 'green',
         status: 'matched',
         comment: 'Complete line match',
@@ -1755,6 +1892,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         lineNum: lIdx + 1,
         text: cleanLine,
         raw: lineB.raw || cleanLine,
+        page: lineB.page || 1,
+        box: lineB.box || null,
         color: isWholeLineError ? 'red' : 'green', // If whole line is mismatched, mark line in red! Otherwise green line with red word boxes
         status: isWholeLineError ? 'mismatched' : 'matched_with_word_errors',
         hasWordErrors: true,
@@ -1772,7 +1911,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       mismatchReport.push({
         index: mismatchReport.length + 1,
         id: `line_err_${lIdx + 1}`,
-        page: 1,
+        page: lineB.page || 1,
         section: 'Important Safety Information',
         originalWordText: targetLineText,
         pdfText: cleanLine,
@@ -1803,7 +1942,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       mismatchReport.push({
         index: mismatchReport.length + 1,
         id: `missing_ref_${unconsumedRef + 1}`,
-        page: 1,
+        page: linesA[unconsumedRef]?.page || 1,
         section: 'Important Safety Information',
         originalWordText: linesA[unconsumedRef].clean,
         pdfText: '(missing in Composite PDF)',
@@ -1977,6 +2116,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       lineNum: mIdx + 1,
       text: cleanLine,
       raw: mLine.raw || cleanLine,
+      page: mLine.page || 1,
+      box: mLine.box || null,
       color: 'green',
       status: isMatch ? 'matched' : 'matched_with_word_errors',
       hasWordErrors: !isMatch,
@@ -1995,7 +2136,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       marketingDiscrepancies.push({
         index: marketingDiscrepancies.length + 1,
         id: `mkt_err_${mIdx + 1}`,
-        page: 1,
+        page: mLine.page || 1,
         section: 'Marketing & Promotional Content',
         originalWordText: cleanLine,
         pdfText: cleanLine,
@@ -2012,6 +2153,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     lineNum: idx + 1,
     text: l.clean,
     raw: l.raw,
+    page: l.page || 1,
+    box: l.box || null,
     color: 'green',
     status: 'matched',
     comment: '✓ Approved Marketing Master Reference',

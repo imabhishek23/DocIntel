@@ -65,18 +65,20 @@ function computePageHighlights(
   dpr = 1,
   isWordToPdf = false,
   isIsiComparison = false,
-  isiLineResults = []
+  isiLineResults = [],
+  safePageNum = 1
 ) {
-  if (!items || items.length === 0) {
+  const hasItems = items && Array.isArray(items) && items.length > 0;
+  const hasIsiLines = isIsiComparison && Array.isArray(isiLineResults) && isiLineResults.length > 0;
+
+  if (!hasItems && !hasIsiLines) {
     return [];
   }
 
   // Filter only text items that have valid transform arrays (PDF.js can include TextMarkedContent without transform)
-  const validItems = items.filter(
-    (it) => it && Array.isArray(it.transform) && it.transform.length >= 6
-  );
-
-  if (validItems.length === 0) return [];
+  const validItems = hasItems
+    ? items.filter((it) => it && Array.isArray(it.transform) && it.transform.length >= 6)
+    : [];
 
   // Pre-calculate CSS boxes for each text item
   const itemBoxes = validItems.map((item, idx) => {
@@ -148,6 +150,9 @@ function computePageHighlights(
     const usedIndices = new Set();
 
     for (const lr of isiLineResults) {
+      // 1. Filter lines that belong to this page (User Requirement: match across 3 pages)
+      if (lr.page && safePageNum && lr.page !== safePageNum) continue;
+
       const lrClean = (lr.text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!lrClean && lr.text !== '•' && lr.text !== '-' && lr.text !== '*') continue;
 
@@ -184,53 +189,81 @@ function computePageHighlights(
       if (bestIdx >= 0) {
         matchedLine = pageLines[bestIdx];
         matchedIdx = bestIdx;
+        usedIndices.add(matchedIdx);
       }
 
+      let lineBox = null;
       if (matchedLine) {
-        usedIndices.add(matchedIdx);
-        const isMatch = lr.color === 'green' && (!lr.wordErrors || lr.wordErrors.length === 0);
-        const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
-        const isLineMatch = lr.color === 'green';
+        lineBox = matchedLine.box;
+      } else if (lr.box && viewport) {
+        // Direct conversion of PDF point bounding box (from OCR) to viewport pixels
+        const rect = viewport.convertToViewportRectangle([
+          lr.box.x,
+          lr.box.y,
+          lr.box.x + lr.box.w,
+          lr.box.y + lr.box.h,
+        ]);
+        lineBox = {
+          x: Math.round(Math.min(rect[0], rect[2]) / dpr),
+          y: Math.round(Math.min(rect[1], rect[3]) / dpr),
+          w: Math.round(Math.abs(rect[2] - rect[0]) / dpr),
+          h: Math.round(Math.abs(rect[3] - rect[1]) / dpr),
+        };
+      }
 
-        // 1. Overall Line Highlight (Rendered in Green only if line structure is verified, Red if mismatched)
-        highlights.push({
-          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
-          index: lr.lineNum || lr.lineIndex,
-          target: lr.text,
-          box: matchedLine.box,
-          boxes: [matchedLine.box],
-          isMatch: isLineMatch,
-          isError: !isLineMatch,
-          color: isLineMatch ? 'green' : 'red',
-          category: isMatch
-            ? 'Complete Line Match'
-            : hasWordErrors && isLineMatch
-            ? 'Line Structure Verified (Word Corrections Marked in Red)'
-            : lr.status === 'extra_line'
-            ? 'Extra Line'
-            : 'Line Discrepancy',
-          details: isMatch
-            ? '✓ Verified Line Match'
-            : hasWordErrors && isLineMatch
-            ? `Line structure matches approved reference (${lr.wordErrors.length} specific word correction marked in red)`
-            : lr.comment,
-          comment: lr.comment,
-          expected: lr.expected || lr.text,
-          found: lr.found || lr.text,
-          isLineDiscrepancy: !isLineMatch,
-          isMissingLine: !isMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
-        });
+      if (!lineBox) continue;
 
-        // 2. Word-Level Red Highlights (User Requirement: "mark the word only in red")
-        if (hasWordErrors && matchedLine.lineItems) {
-          lr.wordErrors.forEach((we, wIdx) => {
-            const weWord = (we.word || '').trim();
-            if (!weWord) return;
+      // CRITICAL: Clamp lineBox height to normal single-line height! (User Requirement: "no need to mark whole page")
+      const safeLineH = Math.min(Math.max(lineBox.h, 12), 34);
+      const safeLineBox = {
+        ...lineBox,
+        h: safeLineH,
+      };
 
-            let wordBox = null;
-            const cleanWeWord = weWord.toLowerCase().replace(/[^\w]/g, '');
+      const isMatch = lr.color === 'green' && (!lr.wordErrors || lr.wordErrors.length === 0);
+      const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
+      const isLineMatch = lr.color === 'green';
 
-            // Find matching item on the line
+      // 1. Overall Line Highlight (Rendered in Green only if line structure is verified, Red if mismatched)
+      highlights.push({
+        id: `isi_line_${lr.lineNum || lr.lineIndex}`,
+        index: lr.lineNum || lr.lineIndex,
+        target: lr.text,
+        box: safeLineBox,
+        boxes: [safeLineBox],
+        isMatch: isLineMatch,
+        isError: !isLineMatch,
+        color: isLineMatch ? 'green' : 'red',
+        category: isMatch
+          ? 'Complete Line Match'
+          : hasWordErrors && isLineMatch
+          ? 'Line Structure Verified (Word Corrections Marked in Red)'
+          : lr.status === 'extra_line'
+          ? 'Extra Line'
+          : 'Line Discrepancy',
+        details: isMatch
+          ? '✓ Verified Line Match'
+          : hasWordErrors && isLineMatch
+          ? `Line structure matches approved reference (${lr.wordErrors.length} specific word correction marked in red)`
+          : lr.comment,
+        comment: lr.comment,
+        expected: lr.expected || lr.text,
+        found: lr.found || lr.text,
+        isLineDiscrepancy: !isLineMatch,
+        isMissingLine: !isMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
+      });
+
+      // 2. Word-Level Red Highlights (User Requirement: "any error mark red")
+      if (hasWordErrors) {
+        lr.wordErrors.forEach((we, wIdx) => {
+          const weWord = (we.word || '').trim();
+          if (!weWord) return;
+
+          let wordBox = null;
+          const cleanWeWord = weWord.toLowerCase().replace(/[^\w]/g, '');
+
+          // Find matching item on the line if vector text exists
+          if (matchedLine?.lineItems) {
             for (const item of matchedLine.lineItems) {
               const itemStr = (item.str || '').trim();
               const cleanItemStr = itemStr.toLowerCase().replace(/[^\w]/g, '');
@@ -241,12 +274,12 @@ function computePageHighlights(
                   x: Math.round(item.x - 1),
                   y: Math.round(item.y - 1),
                   w: Math.max(14, Math.round(item.w + 2)),
-                  h: Math.max(12, Math.round(item.h + 2)),
+                  h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
                 };
                 break;
               }
 
-              // Case B: Substring within token (e.g. "pregnent" in "pregnent women.")
+              // Case B: Substring within token
               const idxInItem = itemStr.toLowerCase().indexOf(weWord.toLowerCase());
               if (idxInItem >= 0) {
                 const charW = item.w / (itemStr.length || 1);
@@ -254,13 +287,13 @@ function computePageHighlights(
                   x: Math.round(item.x + idxInItem * charW - 1),
                   y: Math.round(item.y - 1),
                   w: Math.max(14, Math.round(weWord.length * charW + 2)),
-                  h: Math.max(12, Math.round(item.h + 2)),
+                  h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
                 };
                 break;
               }
             }
 
-            // Case B2: Multi-item span match (e.g. "Prescribing Information" spanning across items)
+            // Case B2: Multi-item span match
             if (!wordBox && matchedLine.lineItems.length > 1) {
               const weWords = weWord.toLowerCase().split(/\s+/).filter(Boolean);
               if (weWords.length >= 2) {
@@ -283,7 +316,7 @@ function computePageHighlights(
                           x: Math.round(minX - 1),
                           y: Math.round(minY - 1),
                           w: Math.max(14, Math.round(maxX - minX + 2)),
-                          h: Math.max(12, Math.round(maxY - minY + 2)),
+                          h: Math.min(32, Math.max(12, Math.round(maxY - minY + 2))),
                         };
                         break;
                       }
@@ -293,88 +326,82 @@ function computePageHighlights(
                 }
               }
             }
+          }
 
-            // Case B3: Word error matches full line text
-            if (!wordBox && cleanWeWord === matchedLine.clean) {
-              wordBox = { ...matchedLine.box };
+          // Case B3: Word error matches full line text
+          if (!wordBox && cleanWeWord === (matchedLine ? matchedLine.clean : lrClean)) {
+            wordBox = { ...safeLineBox };
+          }
+
+          // Fallback: estimate proportional position across the safeLineBox
+          if (!wordBox) {
+            const lineText = lr.text || (matchedLine ? matchedLine.text : '') || '';
+            const idxInLine = lineText.toLowerCase().indexOf(weWord.toLowerCase());
+            if (idxInLine >= 0) {
+              const charW = safeLineBox.w / (lineText.length || 1);
+              wordBox = {
+                x: Math.round(safeLineBox.x + idxInLine * charW - 1),
+                y: Math.round(safeLineBox.y - 1),
+                w: Math.max(14, Math.round(weWord.length * charW + 2)),
+                h: safeLineH,
+              };
+            } else {
+              wordBox = { ...safeLineBox };
             }
+          }
 
-            // Case C: Missing terminal punctuation at line end
-            if (!wordBox && (we.type === 'punctuation_missing' || (we.issue && we.issue.includes('missing period')))) {
-              const lastItem = matchedLine.lineItems[matchedLine.lineItems.length - 1];
-              if (lastItem) {
-                wordBox = {
-                  x: Math.round(lastItem.x + lastItem.w),
-                  y: Math.round(lastItem.y - 1),
-                  w: 14,
-                  h: Math.max(12, Math.round(lastItem.h + 2)),
-                };
-              }
-            }
+          if (wordBox) {
+            const errCategory =
+              we.type === 'spelling'
+                ? 'Spelling Mistake'
+                : we.type === 'spacing'
+                ? 'Spacing Difference'
+                : we.type === 'formatting'
+                ? 'Bold / Italic Formatting'
+                : we.type === 'color' || we.type === 'color_mismatch'
+                ? 'Color Mismatch'
+                : we.type === 'capitalization'
+                ? 'Capitalization Difference'
+                : we.type === 'punctuation_missing' || we.type === 'punctuation'
+                ? 'Punctuation Difference'
+                : 'Word Discrepancy';
 
-            // Fallback: estimate proportional position across the line box
-            if (!wordBox) {
-              const lineText = matchedLine.text || '';
-              const idxInLine = lineText.toLowerCase().indexOf(weWord.toLowerCase());
-              if (idxInLine >= 0) {
-                const charW = matchedLine.box.w / (lineText.length || 1);
-                wordBox = {
-                  x: Math.round(matchedLine.box.x + idxInLine * charW - 1),
-                  y: Math.round(matchedLine.box.y - 1),
-                  w: Math.max(14, Math.round(weWord.length * charW + 2)),
-                  h: Math.max(12, Math.round(matchedLine.box.h + 2)),
-                };
-              }
-            }
-
-            if (wordBox) {
-              const errCategory =
-                we.type === 'spelling'
-                  ? 'Spelling Mistake'
-                  : we.type === 'spacing'
-                  ? 'Spacing Difference'
-                  : we.type === 'formatting'
-                  ? 'Bold / Italic Formatting'
-                  : we.type === 'color' || we.type === 'color_mismatch'
-                  ? 'Color Mismatch'
-                  : we.type === 'capitalization'
-                  ? 'Capitalization Difference'
-                  : we.type === 'punctuation_missing' || we.type === 'punctuation'
-                  ? 'Punctuation Difference'
-                  : 'Word Discrepancy';
-
-              highlights.push({
+            highlights.push({
+              id: `word_err_${lr.lineNum || lr.lineIndex}_${wIdx}`,
+              index: lr.lineNum || lr.lineIndex,
+              target: weWord,
+              box: wordBox,
+              boxes: [wordBox],
+              isMatch: false,
+              isError: true,
+              color: 'red',
+              isWordDiscrepancy: true,
+              category: errCategory,
+              details: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
+              comment: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
+              expected: we.expected || '(correct text)',
+              found: weWord,
+              discrepancy: {
                 id: `word_err_${lr.lineNum || lr.lineIndex}_${wIdx}`,
-                index: lr.lineNum || lr.lineIndex,
-                target: weWord,
-                box: wordBox,
-                boxes: [wordBox],
-                isMatch: false,
-                isError: true,
-                color: 'red',
-                isWordDiscrepancy: true,
                 category: errCategory,
-                details: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
-                comment: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
-                expected: we.expected || '(correct text)',
+                type: we.type || 'word_mismatch',
+                severity: 'high',
+                expected: we.expected,
                 found: weWord,
-                discrepancy: {
-                  id: `word_err_${lr.lineNum || lr.lineIndex}_${wIdx}`,
-                  category: errCategory,
-                  type: we.type || 'word_mismatch',
-                  severity: 'high',
-                  expected: we.expected,
-                  found: weWord,
-                  details: we.issue,
-                },
-              });
-            }
-          });
-        }
+                details: we.issue,
+              },
+            });
+          }
+        });
       }
     }
 
     return highlights;
+  }
+
+  // In ISI comparison mode, strictly return only the ISI lines and word errors (ignore all non-ISI headers, annotations, tables)
+  if (isIsiComparison) {
+    return [];
   }
 
   if (
@@ -1122,20 +1149,21 @@ export default function PdfVisualViewer({
 
     async function computeHighlights() {
       try {
-        const { page, viewport, dpr } = renderedPageInfo;
+        const { page, viewport, dpr, safePageNum } = renderedPageInfo;
         const textContent = await page.getTextContent();
         if (isCancelled) return;
 
         // 1. Text & Formatting discrepancy bounding boxes
         const textHighlights = computePageHighlights(
-          textContent.items,
+          textContent ? textContent.items : [],
           viewport,
           discrepancies,
           matchingTokens,
           dpr,
           isWordToPdf,
           isIsiComparison,
-          isiLineResults
+          isiLineResults,
+          safePageNum || 1
         );
 
         // 2. Color difference detection between Baseline (Staging) & Revision (Composite)
