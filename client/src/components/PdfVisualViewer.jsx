@@ -1167,20 +1167,7 @@ export default function PdfVisualViewer({
           safePageNum || 1
         );
 
-        // 2. Color difference detection between Baseline (Staging) & Revision (Composite)
-        // (Skipped in ISI mode to prevent false color shifts on promotional graphics)
-        let colorHighlights = [];
-        if (!isIsiComparison && baselineCanvasRef?.current && canvasRef.current) {
-          colorHighlights = detectColorDifferences(
-            baselineCanvasRef.current,
-            canvasRef.current,
-            textHighlights,
-            dpr
-          );
-        }
-
         if (!isCancelled) {
-          setPageHighlights([...textHighlights, ...colorHighlights]);
           setPageHighlights(textHighlights);
         }
       } catch (err) {

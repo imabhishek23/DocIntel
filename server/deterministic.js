@@ -646,10 +646,8 @@ export function computeVisualWordDiff(textA, textB, options = {}) {
   // retain full-document visual and text comparison 100% unchanged.
   const isWordToPdf = !!options.isWordToPdf;
   const isIsiRefA = isIsiReferenceStandard(textA, options.docAName);
-  const hasIsiB = hasIsiContent(textB);
   const isMasterA = isIsiMaster(textA) || /(?:isi|indication|prescribing)/i.test(options.docAName || '');
 
-  if ((isWordToPdf && isIsiMaster(textA)) || (isIsiRefA && hasIsiB)) {
   if (isWordToPdf || isIsiRefA || isMasterA) {
     return compareIsiLineByLine(textA, textB, options);
   }
