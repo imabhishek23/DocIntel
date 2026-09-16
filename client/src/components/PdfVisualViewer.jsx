@@ -1181,6 +1181,7 @@ export default function PdfVisualViewer({
 
         if (!isCancelled) {
           setPageHighlights([...textHighlights, ...colorHighlights]);
+          setPageHighlights(textHighlights);
         }
       } catch (err) {
         console.warn('[PdfVisualViewer] Highlight calculation error:', err);
