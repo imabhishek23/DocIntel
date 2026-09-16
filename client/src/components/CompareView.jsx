@@ -169,6 +169,8 @@ export default function CompareView({ onOpenQA }) {
         matchingTokens: data.matchingTokens || [],
         isiAudit: data.isiAudit || null,
         isiLineResults: data.isiLineResults || [],
+        isiLineResultsA: data.isiLineResultsA || [],
+        isiLineResultsB: data.isiLineResultsB || [],
         isIsiComparison: data.isIsiComparison || false,
       });
     } catch (err) {

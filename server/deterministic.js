@@ -646,9 +646,11 @@ export function computeVisualWordDiff(textA, textB, options = {}) {
   // retain full-document visual and text comparison 100% unchanged.
   const isWordToPdf = !!options.isWordToPdf;
   const isIsiRefA = isIsiReferenceStandard(textA, options.docAName);
-  const isMasterA = isIsiMaster(textA) || /(?:isi|indication|prescribing)/i.test(options.docAName || '');
+  const isMasterA = isIsiMaster(textA) || /(?:isi|indication|prescribing|safety|approved|master|reference)/i.test(options.docAName || '');
+  const hasIsiA = hasIsiContent(textA);
+  const hasIsiB = hasIsiContent(textB);
 
-  if (isWordToPdf || isIsiRefA || isMasterA) {
+  if (isWordToPdf || isIsiRefA || isMasterA || hasIsiA || hasIsiB) {
     return compareIsiLineByLine(textA, textB, options);
   }
 
@@ -1141,7 +1143,7 @@ const COMPOSITE_NON_ISI_LINE_REGEX =
   /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|Additional\s+Important\s+Safety\s+Information|continued\s+b[ea]low|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
 
 const COMPOSITE_ISI_START_REGEX =
-  /^(?:<b>\s*)?(?:IMMUNOVA\s*\|\s*IMPORTANT SAFETY INFORMATION|AEROVIA\s*\|\s*IMPORTANT SAFETY INFORMATION|Prescribing\s+Information$|Indication$|Indication\b|Important\s+Safety\s+Information|Selected\s+Important\s+Safety\s+Information|Important\s+Safety\s+Information\s*\(cont[’']?d\))/i;
+  /^(?:<b>\s*)?(?:[A-Z0-9\s-]+\|\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(?:&|and)\s*Important\s+Safety\s+Information|Contraindications?|Warnings\s*(?:and|&)\s*Precautions|Adverse\s+Reactions|Boxed\s+Warning|Safety\s+Considerations)/i;
 
 /**
  * Extracts both ISI and Non-ISI marketing lines from Composite PDF B or Reference Document A.
@@ -2042,156 +2044,13 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     ],
   };
 
-  // ── NON-ISI MARKETING CONTENT AUDIT ──
+  // Strict ISI isolation: Completely ignore all promotional, header, footer, image, and non-ISI lines
   const marketingLineResultsB = [];
+  const marketingLineResultsA = [];
   const marketingDiscrepancies = [];
-
-  for (let mIdx = 0; mIdx < nonIsiLinesB.length; mIdx++) {
-    const mLine = nonIsiLinesB[mIdx];
-    const cleanLine = mLine.clean;
-    const issues = [];
-    const wordErrors = [];
-    let section = 'Marketing & Promotional Content';
-    let defaultComment = '✓ Promotional Marketing Content: Verified';
-
-    // 1. Email Header checks (verify Subject, Preheader, Educational Notice, Brand Logo)
-    if (/^Subject:/i.test(cleanLine)) {
-      section = 'Email Header: Subject';
-      defaultComment = '✓ Email Header: Subject verified (Bold)';
-      if (!/<b>Subject:<\/b>/i.test(mLine.raw) && !mLine.tokens?.some(t => t.raw.includes('Subject:') && t.isBold)) {
-        issues.push('Formatting: "Subject:" label should be bold');
-        wordErrors.push({ word: 'Subject:', expected: '<b>Subject:</b>', issue: 'Formatting: "Subject:" label should be bold', type: 'formatting' });
-      }
-    } else if (/^Preheader:/i.test(cleanLine)) {
-      section = 'Email Header: Preheader';
-      defaultComment = '✓ Email Header: Preheader verified (Bold, proper terminal punctuation)';
-      if (!/<b>Preheader:<\/b>/i.test(mLine.raw) && !mLine.tokens?.some(t => t.raw.includes('Preheader:') && t.isBold)) {
-        issues.push('Formatting: "Preheader:" label should be bold');
-        wordErrors.push({ word: 'Preheader:', expected: '<b>Preheader:</b>', issue: 'Formatting: "Preheader:" label should be bold', type: 'formatting' });
-      }
-    } else if (/^HCP EDUCATIONAL EMAIL/i.test(cleanLine)) {
-      section = 'Email Header: Educational Notice';
-      defaultComment = '✓ Email Header: HCP Educational Banner verified (Bold)';
-    } else if (/^(?:IMMUNOVA|AEROVIA|NUCALA|BENLYSTA)$/i.test(cleanLine)) {
-      section = 'Brand Header';
-      defaultComment = `✓ Brand Header: ${cleanLine} Brand Logo Header verified`;
-    } else if (/^CONTINUED BELOW/i.test(cleanLine)) {
-      section = 'Section Transition';
-      defaultComment = '✓ Transition Callout: CONTINUED BELOW verified';
-    } else if (/^ADULTS\s*≥/i.test(cleanLine)) {
-      section = 'Hero Banner: Risk';
-      defaultComment = '✓ Hero Headline: Shingles risk headline banner verified';
-    } else if (/^ARTHUR/i.test(cleanLine)) {
-      section = 'Patient Vignette: Profile';
-      defaultComment = '✓ Patient Profile: Arthur vignette verified';
-    } else if (/^PATIENT\s+(?:SNAPSHOT|HISTORY)/i.test(cleanLine)) {
-      section = 'Patient History';
-      defaultComment = `✓ Clinical Record: ${cleanLine} verified`;
-    } else if (/^DIABETES/i.test(cleanLine)) {
-      section = 'Medical Condition Callout';
-      defaultComment = '✓ Disease Education: Diabetes correlation verified';
-    } else if (/^SEE EXAMPLES/i.test(cleanLine) || /^EXPLORE/i.test(cleanLine)) {
-      section = 'Call to Action (CTA)';
-      defaultComment = '✓ Action Button: Healthcare provider CTA verified';
-    } else if (/VACCINES WAC|US healthcare professionals|STOP OR CHANGE|Trademarks are owned|Produced in USA|Privacy Notice|You are receiving this email|Email Vendor/i.test(cleanLine)) {
-      section = 'Regulatory & Email Footer';
-      defaultComment = '✓ Compliance Footer: Legal notice verified';
-    }
-
-    // Proofreading & QA checks on marketing text
-    if (/\bhas occurred\b/i.test(cleanLine) && /\b(infections|reactions|events|cases|studies)\b/i.test(cleanLine)) {
-      const issueMsg = 'Grammar agreement: plural subject with singular "has occurred"';
-      issues.push(issueMsg);
-      wordErrors.push({ word: 'has occurred', expected: 'have occurred', issue: issueMsg, type: 'grammar' });
-    }
-    if (/\s{2,}/.test(cleanLine)) {
-      const issueMsg = 'Spacing difference: multiple consecutive spaces';
-      issues.push(issueMsg);
-      wordErrors.push({ word: '  ', expected: ' ', issue: issueMsg, type: 'spacing' });
-    }
-    if (/\b(?:pregnent)\b/i.test(cleanLine)) {
-      const issueMsg = 'Spelling mistake: found "pregnent", expected "pregnant"';
-      issues.push(issueMsg);
-      wordErrors.push({ word: 'pregnent', expected: 'pregnant', issue: issueMsg, type: 'spelling' });
-    }
-    if (/\b(?:inflamation)\b/i.test(cleanLine)) {
-      const issueMsg = 'Spelling mistake: found "inflamation", expected "inflammation"';
-      issues.push(issueMsg);
-      wordErrors.push({ word: 'inflamation', expected: 'inflammation', issue: issueMsg, type: 'spelling' });
-    }
-    if (/\b(?:recieved)\b/i.test(cleanLine)) {
-      const issueMsg = 'Spelling mistake: found "recieved", expected "received"';
-      issues.push(issueMsg);
-      wordErrors.push({ word: 'recieved', expected: 'received', issue: issueMsg, type: 'spelling' });
-    }
-    if (/\b(?:uncontrolld)\b/i.test(cleanLine)) {
-      const issueMsg = 'Spelling mistake: found "uncontrolld", expected "uncontrolled"';
-      issues.push(issueMsg);
-      wordErrors.push({ word: 'uncontrolld', expected: 'uncontrolled', issue: issueMsg, type: 'spelling' });
-    }
-
-    const isMatch = issues.length === 0;
-    const comment = isMatch ? defaultComment : issues.join('; ');
-
-    const lineResult = {
-      lineIndex: mIdx + 1,
-      lineNum: mIdx + 1,
-      text: cleanLine,
-      raw: mLine.raw || cleanLine,
-      page: mLine.page || 1,
-      box: mLine.box || null,
-      color: 'green',
-      status: isMatch ? 'matched' : 'matched_with_word_errors',
-      hasWordErrors: !isMatch,
-      wordErrors,
-      comment,
-      issues,
-      expected: cleanLine,
-      found: cleanLine,
-      section,
-      isMarketing: true,
-    };
-
-    marketingLineResultsB.push(lineResult);
-
-    if (!isMatch) {
-      marketingDiscrepancies.push({
-        index: marketingDiscrepancies.length + 1,
-        id: `mkt_err_${mIdx + 1}`,
-        page: mLine.page || 1,
-        section: 'Marketing & Promotional Content',
-        originalWordText: cleanLine,
-        pdfText: cleanLine,
-        errorType: issues[0]?.split(':')[0] || 'Marketing QA',
-        severity: 'medium',
-        details: comment,
-        isMarketing: true,
-      });
-    }
-  }
-
-  const marketingLineResultsA = nonIsiLinesA.map((l, idx) => ({
-    lineIndex: idx + 1,
-    lineNum: idx + 1,
-    text: l.clean,
-    raw: l.raw,
-    page: l.page || 1,
-    box: l.box || null,
-    color: 'green',
-    status: 'matched',
-    comment: '✓ Approved Marketing Master Reference',
-    expected: l.clean,
-    found: l.clean,
-    section: 'Marketing & Promotional Content',
-    isMarketing: true,
-  }));
-
-  const allLineResultsB = [...marketingLineResultsB, ...isiLineResultsB];
-  const allLineResultsA = [...marketingLineResultsA, ...isiLineResultsA];
-
-  const marketingMatched = marketingLineResultsB.filter((r) => r.color === 'green').length;
-  const marketingScore =
-    marketingLineResultsB.length > 0 ? Math.round((marketingMatched / marketingLineResultsB.length) * 100) : 100;
+  const allLineResultsB = [...isiLineResultsB];
+  const allLineResultsA = [...isiLineResultsA];
+  const marketingScore = 100;
 
   return {
     isIsiComparison: true,

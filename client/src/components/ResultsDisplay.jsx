@@ -161,26 +161,30 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
   const [auditScope, setAuditScope] = useState('isi'); // 'isi' | 'all' | 'marketing'
 
   const activeLineResultsB = useMemo(() => {
-    if (auditScope === 'marketing') {
-      return marketingLineResultsB && marketingLineResultsB.length > 0 ? marketingLineResultsB : [];
-    }
-    if (auditScope === 'isi') {
-      return isiLineResultsB && isiLineResultsB.length > 0 ? isiLineResultsB : isiLineResults;
-    }
-    return allLineResultsB && allLineResultsB.length > 0
-      ? allLineResultsB
-      : (isiLineResultsB && isiLineResultsB.length > 0 ? isiLineResultsB : isiLineResults);
-  }, [auditScope, marketingLineResultsB, isiLineResultsB, isiLineResults, allLineResultsB]);
+    return isiLineResultsB && isiLineResultsB.length > 0 ? isiLineResultsB : isiLineResults;
+  }, [isiLineResultsB, isiLineResults]);
 
   const activeLineResultsA = useMemo(() => {
-    if (auditScope === 'marketing') {
-      return marketingLineResultsA || [];
+    return isiLineResultsA || [];
+  }, [isiLineResultsA]);
+
+  const maxPages = useMemo(() => {
+    const pagesB = (isiLineResultsB || []).map((l) => l.page || 1);
+    const pagesA = (isiLineResultsA || []).map((l) => l.page || 1);
+    return Math.max(pdfTotalPages || 1, ...pagesB, ...pagesA, 1);
+  }, [pdfTotalPages, isiLineResultsB, isiLineResultsA]);
+
+  useEffect(() => {
+    if (isIsiComparison && Array.isArray(isiLineResultsB) && isiLineResultsB.length > 0) {
+      const currentPageHasIsi = isiLineResultsB.some((l) => (l.page || 1) === pdfPage);
+      if (!currentPageHasIsi) {
+        const firstIsi = isiLineResultsB.find((l) => (l.page || 1) >= 1)?.page;
+        if (firstIsi && firstIsi !== pdfPage) {
+          setPdfPage(firstIsi);
+        }
+      }
     }
-    if (auditScope === 'isi') {
-      return isiLineResultsA || [];
-    }
-    return allLineResultsA && allLineResultsA.length > 0 ? allLineResultsA : (isiLineResultsA || []);
-  }, [auditScope, marketingLineResultsA, isiLineResultsA, allLineResultsA]);
+  }, [isIsiComparison, isiLineResultsB]);
 
   // Synchronized scrolling refs & state
   const leftSlideRef = useRef(null);
@@ -1483,69 +1487,95 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                 </div>
 
                 {/* REVIEW FOCUS / AUDIT SCOPE SELECTOR */}
+                {/* STRICT ISI VERIFICATION BANNER */}
                 {isIsiComparison && (
-                  <div className="flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-2.5 rounded-2xl border border-slate-200/80 shadow-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-black uppercase tracking-wider text-slate-500">Review Focus:</span>
-                      <div className="inline-flex items-center rounded-xl bg-slate-100 p-1 border border-slate-200">
-                        <button
-                          type="button"
-                          onClick={() => setAuditScope('isi')}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
-                            auditScope === 'isi'
-                              ? 'bg-emerald-600 text-white shadow-xs'
-                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                          }`}
-                        >
-                          <ShieldCheck className="h-3.5 w-3.5" />
-                          ISI Safety Content ({isiLineResultsB.length})
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setAuditScope('all')}
-                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
-                            auditScope === 'all'
-                              ? 'bg-slate-900 text-white shadow-xs'
-                              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                          }`}
-                        >
-                          <Layers className="h-3.5 w-3.5" />
-                          Full Document ({allLineResultsB.length})
-                        </button>
-                        {marketingLineResultsB.length > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setAuditScope('marketing')}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-black rounded-lg transition cursor-pointer ${
-                              auditScope === 'marketing'
-                                ? 'bg-indigo-600 text-white shadow-xs'
-                                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                            }`}
-                          >
-                            <Megaphone className="h-3.5 w-3.5" />
-                            Non-ISI Marketing Copy ({marketingLineResultsB.length})
-                          </button>
-                        )}
+                  <div className="flex flex-wrap items-center justify-between gap-3 bg-emerald-50/90 px-4 py-2.5 rounded-2xl border border-emerald-200/80 shadow-xs">
+                    <div className="flex items-center gap-2.5">
+                      <span className="inline-flex items-center justify-center p-1.5 rounded-xl bg-emerald-600 text-white shadow-xs">
+                        <ShieldCheck className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+                          Targeted ISI Safety Information Audit
+                        </span>
+                        <p className="text-[11px] font-medium text-emerald-800">
+                          Comparing approved ISI text sequence against mass emailer. All non-ISI images, logos, headers, banners &amp; footers are completely ignored.
+                        </p>
                       </div>
                     </div>
-                    <div className="text-xs font-semibold text-slate-500">
-                      {auditScope === 'marketing' && (
-                        <span className="inline-flex items-center gap-1.5 text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-md">
-                          <span className="h-2 w-2 rounded-full bg-indigo-500 animate-pulse" />
-                          Highlighting Non-ISI Marketing &amp; Promotional Content (ISI Section Unmarked)
-                        </span>
-                      )}
-                      {auditScope === 'isi' && (
-                        <span className="inline-flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md">
-                          <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                          Highlighting ISI Statements (Marketing Copy Unmarked)
-                        </span>
-                      )}
-                      {auditScope === 'all' && (
-                        <span className="inline-flex items-center gap-1.5 text-slate-700 bg-slate-100 border border-slate-300 px-2.5 py-1 rounded-md">
-                          Highlighting All Content Across Document
-                        </span>
-                      )}
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-emerald-100/80 text-emerald-900 border border-emerald-300">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                        {isiLineResultsB.length} ISI Statements Checked
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* PROMINENT MULTI-PAGE NAVIGATION BAR */}
+                {maxPages > 1 && (
+                  <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-sm border border-slate-800">
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                        Document Pages ({maxPages}):
+                      </span>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {Array.from({ length: maxPages }, (_, i) => i + 1).map((pNum) => {
+                          const countB = (isiLineResultsB || []).filter((l) => (l.page || 1) === pNum).length;
+                          const errorsB = (isiLineResultsB || []).filter(
+                            (l) => (l.page || 1) === pNum && l.color === 'red'
+                          ).length;
+                          const isCurrent = pdfPage === pNum;
+                          return (
+                            <button
+                              key={pNum}
+                              type="button"
+                              onClick={() => setPdfPage(pNum)}
+                              className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
+                                isCurrent
+                                  ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-400'
+                                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white'
+                              }`}
+                            >
+                              <span>Page {pNum}</span>
+                              {countB > 0 ? (
+                                errorsB > 0 ? (
+                                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-rose-500 text-white font-black">
+                                    ISI: {errorsB} error{errorsB > 1 ? 's' : ''}
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-500 text-white font-black">
+                                    ISI ({countB})
+                                  </span>
+                                )
+                              ) : (
+                                <span className="text-[10px] text-slate-400">Non-ISI</span>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={pdfPage <= 1}
+                        onClick={() => setPdfPage((p) => Math.max(1, p - 1))}
+                        className="px-2.5 py-1 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition text-slate-200"
+                      >
+                        ← Prev Page
+                      </button>
+                      <span className="text-xs font-mono font-bold text-slate-200 px-2">
+                        Page {pdfPage} of {maxPages}
+                      </span>
+                      <button
+                        type="button"
+                        disabled={pdfPage >= maxPages}
+                        onClick={() => setPdfPage((p) => Math.min(maxPages, p + 1))}
+                        className="px-2.5 py-1 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition text-slate-200"
+                      >
+                        Next Page →
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1581,21 +1611,17 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           file={fileA}
                           pdfUrl={pdfUrlA || pdfA}
                           imageSrc={initialImageA}
-                          title={docAName || 'Document A (Staging Reference Standard)'}
+                          title={docAName || 'Document A (Approved ISI Master Reference)'}
                           badge="Slide A"
-                          subtitle={
-                            auditScope === 'marketing'
-                              ? '✓ Staging Master (Promotional Reference)'
-                              : '✓ Staging Master (Error-Free Reference)'
-                          }
+                          subtitle="✓ Approved Master Reference ISI"
                           isAuditTarget={false}
                           isWordToPdf={isWordToPdf}
                           isIsiComparison={isIsiComparison}
-                          isiLineResults={[]}
+                          isiLineResults={activeLineResultsA}
                           scale={pdfZoom}
                           pageNumber={pdfPage}
                           onPageChange={setPdfPage}
-                          onTotalPagesChange={setPdfTotalPages}
+                          onTotalPagesChange={(pages) => setPdfTotalPages((prev) => Math.max(prev, pages))}
                           scrollRef={leftSlideRef}
                           onScroll={handleLeftScroll}
                           discrepancies={EMPTY_DISCREPANCIES}
@@ -1638,13 +1664,9 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                         file={fileB}
                         pdfUrl={pdfUrlB || pdfB}
                         imageSrc={initialImageB}
-                        title={docBName || 'Document B (Composite Audit Target)'}
+                        title={docBName || 'Document B (Mass Emailer Audit Target)'}
                         badge="Slide B"
-                        subtitle={
-                          auditScope === 'marketing'
-                            ? '⚠ Composite Audit Target (Marketing Copy Mode)'
-                            : '⚠ Composite Audit Target (ISI Mode)'
-                        }
+                        subtitle="⚠ Target Document (ISI Mode - Non-ISI Elements Ignored)"
                         isAuditTarget={true}
                         isWordToPdf={isWordToPdf}
                         isIsiComparison={isIsiComparison}
@@ -1652,17 +1674,11 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                         scale={pdfZoom}
                         pageNumber={pdfPage}
                         onPageChange={setPdfPage}
-                        onTotalPagesChange={setPdfTotalPages}
+                        onTotalPagesChange={(pages) => setPdfTotalPages((prev) => Math.max(prev, pages))}
                         scrollRef={rightSlideRef}
                         onScroll={handleRightScroll}
-                        discrepancies={
-                          auditScope === 'marketing'
-                            ? marketingDiscrepancies
-                            : auditScope === 'isi'
-                            ? proofreadingErrors.filter((e) => !e.isMarketing)
-                            : proofreadingErrors
-                        }
-                        matchingTokens={auditScope === 'marketing' ? EMPTY_DISCREPANCIES : matchingTokens}
+                        discrepancies={proofreadingErrors.filter((e) => !e.isMarketing)}
+                        matchingTokens={EMPTY_DISCREPANCIES}
                         baselineCanvasRef={stagingCanvasRef}
                         onOpenComment={(err) => {
                           setActiveCommentTarget({

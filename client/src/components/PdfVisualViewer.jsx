@@ -1142,8 +1142,12 @@ export default function PdfVisualViewer({
   useEffect(() => {
     let isCancelled = false;
 
-    // Only audit target (Slide B) displays in-place highlights; main ISI reference (Slide A) remains clean without green lines
-    if (!isAuditTarget || !renderedPageInfo) {
+    if (!renderedPageInfo) {
+      setPageHighlights([]);
+      return;
+    }
+
+    if (!isAuditTarget && (!isIsiComparison || !isiLineResults || isiLineResults.length === 0)) {
       setPageHighlights([]);
       return;
     }
@@ -1253,7 +1257,7 @@ export default function PdfVisualViewer({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {isAuditTarget && (
+          {(isAuditTarget || pageHighlights.length > 0) && (
             <div className="flex items-center gap-1 bg-white/90 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold">
               <button
                 type="button"
@@ -1265,7 +1269,7 @@ export default function PdfVisualViewer({
                 }`}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-                Red Errors ({discrepancies.length})
+                Red Errors ({pageHighlights.filter((h) => !h.isMatch).length || discrepancies.length})
               </button>
               <button
                 type="button"
@@ -1363,8 +1367,8 @@ export default function PdfVisualViewer({
                 className="rounded-lg shadow-md border border-slate-300 bg-white block"
               />
 
-              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY (Slide B Audit Target Only - main ISI on Slide A remains clean) */}
-              {isAuditTarget && pageHighlights.length > 0 && (
+              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY */}
+              {pageHighlights.length > 0 && (
                 <div
                   className="absolute inset-0 pointer-events-none"
                   style={{
