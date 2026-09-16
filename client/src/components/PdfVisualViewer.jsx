@@ -102,30 +102,42 @@ function computePageHighlights(
     };
   });
 
-  // ── STRICT ISI LINE-BY-LINE VISUAL HIGHLIGHTING (Requirements 1-11) ──
+  // ── STRICT ISI LINE-BY-LINE VISUAL HIGHLIGHTING (Slide B Target Document) ──
   if (isIsiComparison && Array.isArray(isiLineResults) && isiLineResults.length > 0) {
-    // 1. Group rendered PDF text items into distinct visual lines by baseline rawY
-    const lineMap = new Map();
-    for (const it of itemBoxes) {
-      if (!it.cleanStr) continue;
-      let matchedY = null;
-      for (const y of lineMap.keys()) {
-        if (Math.abs(y - it.rawY) < 4) {
-          matchedY = y;
-          break;
+    // 1. Group rendered PDF text items into distinct visual lines by baseline rawY.
+    // CRITICAL: Separate items if there is a column gap (> 35px) to prevent multi-column merging (e.g. sidebar annotations)!
+    const sortedItems = [...itemBoxes]
+      .filter((it) => it.cleanStr)
+      .sort((a, b) => {
+        if (Math.abs(a.rawY - b.rawY) <= 4) {
+          return a.x - b.x;
+        }
+        return b.rawY - a.rawY; // Top of page first
+      });
+
+    const lineSegments = [];
+    let curSegment = [];
+    let curY = null;
+    for (const it of sortedItems) {
+      if (curY === null || Math.abs(it.rawY - curY) > 4) {
+        if (curSegment.length > 0) lineSegments.push(curSegment);
+        curSegment = [it];
+        curY = it.rawY;
+      } else {
+        const prev = curSegment[curSegment.length - 1];
+        const gap = it.x - (prev.x + prev.w);
+        if (gap > 35) {
+          // Large column gap: start a new segment on the same baseline!
+          lineSegments.push(curSegment);
+          curSegment = [it];
+        } else {
+          curSegment.push(it);
         }
       }
-      if (matchedY !== null) {
-        lineMap.get(matchedY).push(it);
-      } else {
-        lineMap.set(it.rawY, [it]);
-      }
     }
+    if (curSegment.length > 0) lineSegments.push(curSegment);
 
-    // Sort lines descending by rawY (top of page first in PDF coordinates)
-    const sortedEntries = [...lineMap.entries()].sort((a, b) => b[0] - a[0]);
-
-    const pageLines = sortedEntries.map(([rawY, lineItems]) => {
+    const pageLines = lineSegments.map((lineItems) => {
       const sorted = [...lineItems].sort((a, b) => a.x - b.x);
       const text = sorted.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
       const minX = Math.min(...sorted.map((m) => m.x));
@@ -133,7 +145,7 @@ function computePageHighlights(
       const maxX = Math.max(...sorted.map((m) => m.x + m.w));
       const maxY = Math.max(...sorted.map((m) => m.y + m.h));
       return {
-        rawY,
+        rawY: lineItems[0].rawY,
         text,
         clean: text.toLowerCase().replace(/[^a-z0-9]/g, ''),
         lineItems: sorted,
@@ -150,16 +162,12 @@ function computePageHighlights(
     const usedIndices = new Set();
 
     for (const lr of isiLineResults) {
-      // 1. Filter lines that belong to this page (User Requirement: match across 3 pages)
-      if (lr.page && safePageNum && lr.page !== safePageNum) continue;
-
       const lrClean = (lr.text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       if (!lrClean && lr.text !== '•' && lr.text !== '-' && lr.text !== '*') continue;
 
       let bestIdx = -1;
       let bestScore = 0;
       let matchedLine = null;
-      let matchedIdx = -1;
 
       for (let pIdx = 0; pIdx < pageLines.length; pIdx++) {
         if (usedIndices.has(pIdx)) continue;
@@ -176,7 +184,7 @@ function computePageHighlights(
         const lenRatio = maxLen > 0 ? minLen / maxLen : 0;
 
         if (
-          ((pl.clean.includes(lrClean) || lrClean.includes(pl.clean)) && lenRatio >= 0.55) ||
+          ((pl.clean.includes(lrClean) || lrClean.includes(pl.clean)) && lenRatio >= 0.5) ||
           (lrClean.length < 4 && (pl.text === lr.text || pl.clean === lrClean))
         ) {
           if (lenRatio > bestScore) {
@@ -188,32 +196,49 @@ function computePageHighlights(
 
       if (bestIdx >= 0) {
         matchedLine = pageLines[bestIdx];
-        matchedIdx = bestIdx;
-        usedIndices.add(matchedIdx);
+        usedIndices.add(bestIdx);
       }
 
-      let lineBox = null;
-      if (matchedLine) {
-        lineBox = matchedLine.box;
-      } else if (lr.box && viewport) {
-        // Direct conversion of PDF point bounding box (from OCR) to viewport pixels
-        const rect = viewport.convertToViewportRectangle([
-          lr.box.x,
-          lr.box.y,
-          lr.box.x + lr.box.w,
-          lr.box.y + lr.box.h,
-        ]);
-        lineBox = {
-          x: Math.round(Math.min(rect[0], rect[2]) / dpr),
-          y: Math.round(Math.min(rect[1], rect[3]) / dpr),
-          w: Math.round(Math.abs(rect[2] - rect[0]) / dpr),
-          h: Math.round(Math.abs(rect[3] - rect[1]) / dpr),
-        };
+      let lineBox = matchedLine ? matchedLine.box : null;
+
+      // Fallback: search itemBoxes directly if matchedLine is null
+      if (!lineBox && lrClean) {
+        const words = lr.text.trim().split(/\s+/).filter(Boolean);
+        if (words.length > 0) {
+          const firstW = words[0].toLowerCase().replace(/[^a-z0-9]/g, '');
+          for (let i = 0; i < itemBoxes.length; i++) {
+            const itClean = itemBoxes[i].cleanStr.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (firstW && (itClean === firstW || itClean.includes(firstW))) {
+              let combined = '';
+              const span = [];
+              for (let j = i; j < Math.min(itemBoxes.length, i + words.length + 4); j++) {
+                span.push(itemBoxes[j]);
+                combined += itemBoxes[j].cleanStr.toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (combined.includes(lrClean) || lrClean.includes(combined)) {
+                  const minX = Math.min(...span.map((m) => m.x));
+                  const minY = Math.min(...span.map((m) => m.y));
+                  const maxX = Math.max(...span.map((m) => m.x + m.w));
+                  const maxY = Math.max(...span.map((m) => m.y + m.h));
+                  lineBox = {
+                    x: Math.round(minX - 1),
+                    y: Math.round(minY),
+                    w: Math.round(maxX - minX + 2),
+                    h: Math.round(maxY - minY),
+                  };
+                  break;
+                }
+              }
+              if (lineBox) break;
+            }
+          }
+        }
       }
 
+      // If text not found on this page and lr specifies another page, skip
+      if (!lineBox && lr.page && safePageNum && lr.page !== safePageNum) continue;
       if (!lineBox) continue;
 
-      // CRITICAL: Clamp lineBox height to normal single-line height! (User Requirement: "no need to mark whole page")
+      // Clamp lineBox height to normal single-line height
       const safeLineH = Math.min(Math.max(lineBox.h, 12), 34);
       const safeLineBox = {
         ...lineBox,
@@ -224,33 +249,59 @@ function computePageHighlights(
       const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
       const isLineMatch = lr.color === 'green';
 
-      // 1. Overall Line Highlight:
-      // - If line is mismatched / extra / missing: push RED line highlight
-      // - If line is 100% matched with NO word errors: push GREEN line highlight
-      // - If line has specific word errors: DO NOT push a green full-line box (avoid cluttering the page!)
-      if (!isLineMatch || !hasWordErrors) {
+      // 1. Line Highlights:
+      // - Correct matches -> clean GREEN box (User Requirement: "macth kp green")
+      // - Mismatches / extra lines -> RED box with explanatory comment (User Requirement: "mismatch hop to red")
+      // - Lines with word errors -> base line in GREEN with specific word errors in RED
+      if (isMatch) {
         highlights.push({
           id: `isi_line_${lr.lineNum || lr.lineIndex}`,
           index: lr.lineNum || lr.lineIndex,
           target: lr.text,
           box: safeLineBox,
           boxes: [safeLineBox],
-          isMatch: isMatch,
-          isError: !isLineMatch,
-          color: isLineMatch ? 'green' : 'red',
-          category: isMatch
-            ? 'Complete Line Match'
-            : lr.status === 'extra_line'
-            ? 'Extra Line'
-            : 'Line Discrepancy',
-          details: isMatch
-            ? '✓ Verified Line Match'
-            : lr.comment,
+          isMatch: true,
+          isError: false,
+          color: 'green',
+          category: 'Complete Line Match',
+          details: '✓ Verified Line Match',
+          comment: lr.comment || '✓ Verified Line Match',
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+        });
+      } else if (!isLineMatch) {
+        highlights.push({
+          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
+          index: lr.lineNum || lr.lineIndex,
+          target: lr.text,
+          box: safeLineBox,
+          boxes: [safeLineBox],
+          isMatch: false,
+          isError: true,
+          color: 'red',
+          category: lr.status === 'extra_line' ? 'Extra Line' : 'Line Discrepancy',
+          details: lr.comment || 'Discrepancy in line',
+          comment: lr.comment || 'Discrepancy in line',
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+          isLineDiscrepancy: true,
+          isMissingLine: lr.status === 'missing_line' || (lr.comment || '').includes('Missing line'),
+        });
+      } else if (hasWordErrors) {
+        highlights.push({
+          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
+          index: lr.lineNum || lr.lineIndex,
+          target: lr.text,
+          box: safeLineBox,
+          boxes: [safeLineBox],
+          isMatch: true,
+          isError: false,
+          color: 'green',
+          category: 'Verified Line with Discrepancy',
+          details: 'Line matched sequence with localized word discrepancy',
           comment: lr.comment,
           expected: lr.expected || lr.text,
           found: lr.found || lr.text,
-          isLineDiscrepancy: !isLineMatch,
-          isMissingLine: !isLineMatch && (lr.status === 'missing_line' || (lr.comment || '').includes('Missing line')),
         });
       }
 
@@ -1147,7 +1198,9 @@ export default function PdfVisualViewer({
       return;
     }
 
-    if (!isAuditTarget && (!isIsiComparison || !isiLineResults || isiLineResults.length === 0)) {
+    // Slide A (isAuditTarget === false) MUST ALWAYS BE 100% CLEAN AND UNTOUCHED.
+    // User requirement: "pdf is main file jaisa h waisa rahne do pdf b me mismatch hop to red macth kp green"
+    if (!isAuditTarget) {
       setPageHighlights([]);
       return;
     }
@@ -1257,7 +1310,7 @@ export default function PdfVisualViewer({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {(isAuditTarget || pageHighlights.length > 0) && (
+          {isAuditTarget && pageHighlights.length > 0 && (
             <div className="flex items-center gap-1 bg-white/90 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold">
               <button
                 type="button"
@@ -1367,8 +1420,8 @@ export default function PdfVisualViewer({
                 className="rounded-lg shadow-md border border-slate-300 bg-white block"
               />
 
-              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY */}
-              {pageHighlights.length > 0 && (
+              {/* IN-PLACE VISUAL BOUNDING BOX OVERLAY (Slide B Audit Target Only) */}
+              {isAuditTarget && pageHighlights.length > 0 && (
                 <div
                   className="absolute inset-0 pointer-events-none"
                   style={{

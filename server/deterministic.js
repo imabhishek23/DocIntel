@@ -1410,11 +1410,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         section: 'Important Safety Information',
       });
 
-      if (nextRefIdx >= 0 && nextRefIdx < isiLineResultsA.length) {
-        isiLineResultsA[nextRefIdx].color = 'red';
-        isiLineResultsA[nextRefIdx].status = 'missing_line';
-        isiLineResultsA[nextRefIdx].comment = 'Missing line';
-      }
+
 
       mismatchReport.push({
         index: mismatchReport.length + 1,
@@ -1557,10 +1553,6 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     if (currRefLine > lastConsumedRefLine + 1) {
       const startSkipped = Math.max(0, lastConsumedRefLine + 1);
       for (let skippedRef = startSkipped; skippedRef < currRefLine; skippedRef++) {
-        isiLineResultsA[skippedRef].color = 'red';
-        isiLineResultsA[skippedRef].status = 'missing_line';
-        isiLineResultsA[skippedRef].comment = 'Missing line';
-
         mismatchReport.push({
           index: mismatchReport.length + 1,
           id: `missing_ref_${skippedRef + 1}`,
@@ -1959,10 +1951,6 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
   // Check remaining unconsumed reference lines in PDF A (Requirement 7)
   if (lastConsumedRefLine < linesA.length - 1) {
     for (let unconsumedRef = lastConsumedRefLine + 1; unconsumedRef < linesA.length; unconsumedRef++) {
-      isiLineResultsA[unconsumedRef].color = 'red';
-      isiLineResultsA[unconsumedRef].status = 'missing_line';
-      isiLineResultsA[unconsumedRef].comment = 'Missing line';
-
       mismatchReport.push({
         index: mismatchReport.length + 1,
         id: `missing_ref_${unconsumedRef + 1}`,
