@@ -143,8 +143,10 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
 
   const [slideDisplayMode, setSlideDisplayMode] = useState(hasVisualDocuments ? 'visual' : 'redline');
   const [pdfZoom, setPdfZoom] = useState(1.0);
-  const [pdfPage, setPdfPage] = useState(1);
-  const [pdfTotalPages, setPdfTotalPages] = useState(1);
+  const [pdfPageA, setPdfPageA] = useState(1);
+  const [pdfTotalPagesA, setPdfTotalPagesA] = useState(1);
+  const [pdfPageB, setPdfPageB] = useState(1);
+  const [pdfTotalPagesB, setPdfTotalPagesB] = useState(1);
 
   const [activeTab, setActiveTab] = useState(
     mode === 'compare' ? (isIsiComparison || (isWordToPdf && mismatchReport.length > 0) ? 'mismatchReport' : 'proofreading') : 'findings'
@@ -168,19 +170,18 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
     return isiLineResultsA || [];
   }, [isiLineResultsA]);
 
-  const maxPages = useMemo(() => {
+  const maxPagesB = useMemo(() => {
     const pagesB = (isiLineResultsB || []).map((l) => l.page || 1);
-    const pagesA = (isiLineResultsA || []).map((l) => l.page || 1);
-    return Math.max(pdfTotalPages || 1, ...pagesB, ...pagesA, 1);
-  }, [pdfTotalPages, isiLineResultsB, isiLineResultsA]);
+    return Math.max(pdfTotalPagesB || 1, ...pagesB, 1);
+  }, [pdfTotalPagesB, isiLineResultsB]);
 
   useEffect(() => {
     if (isIsiComparison && Array.isArray(isiLineResultsB) && isiLineResultsB.length > 0) {
-      const currentPageHasIsi = isiLineResultsB.some((l) => (l.page || 1) === pdfPage);
+      const currentPageHasIsi = isiLineResultsB.some((l) => (l.page || 1) === pdfPageB);
       if (!currentPageHasIsi) {
         const firstIsi = isiLineResultsB.find((l) => (l.page || 1) >= 1)?.page;
-        if (firstIsi && firstIsi !== pdfPage) {
-          setPdfPage(firstIsi);
+        if (firstIsi && firstIsi !== pdfPageB) {
+          setPdfPageB(firstIsi);
         }
       }
     }
@@ -1512,25 +1513,25 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                   </div>
                 )}
 
-                {/* PROMINENT MULTI-PAGE NAVIGATION BAR */}
-                {maxPages > 1 && (
+                {/* PROMINENT MULTI-PAGE NAVIGATION BAR (DRIVES AUDIT TARGET DOCUMENT B) */}
+                {maxPagesB > 1 && (
                   <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-sm border border-slate-800">
                     <div className="flex items-center gap-2.5 flex-wrap">
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                        Document Pages ({maxPages}):
+                        Document Pages ({maxPagesB}):
                       </span>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {Array.from({ length: maxPages }, (_, i) => i + 1).map((pNum) => {
+                        {Array.from({ length: maxPagesB }, (_, i) => i + 1).map((pNum) => {
                           const countB = (isiLineResultsB || []).filter((l) => (l.page || 1) === pNum).length;
                           const errorsB = (isiLineResultsB || []).filter(
                             (l) => (l.page || 1) === pNum && l.color === 'red'
                           ).length;
-                          const isCurrent = pdfPage === pNum;
+                          const isCurrent = pdfPageB === pNum;
                           return (
                             <button
                               key={pNum}
                               type="button"
-                              onClick={() => setPdfPage(pNum)}
+                              onClick={() => setPdfPageB(pNum)}
                               className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
                                 isCurrent
                                   ? 'bg-indigo-600 text-white shadow-sm ring-2 ring-indigo-400'
@@ -1559,19 +1560,19 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        disabled={pdfPage <= 1}
-                        onClick={() => setPdfPage((p) => Math.max(1, p - 1))}
+                        disabled={pdfPageB <= 1}
+                        onClick={() => setPdfPageB((p) => Math.max(1, p - 1))}
                         className="px-2.5 py-1 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition text-slate-200"
                       >
                         ← Prev Page
                       </button>
                       <span className="text-xs font-mono font-bold text-slate-200 px-2">
-                        Page {pdfPage} of {maxPages}
+                        Page {pdfPageB} of {maxPagesB}
                       </span>
                       <button
                         type="button"
-                        disabled={pdfPage >= maxPages}
-                        onClick={() => setPdfPage((p) => Math.min(maxPages, p + 1))}
+                        disabled={pdfPageB >= maxPagesB}
+                        onClick={() => setPdfPageB((p) => Math.min(maxPagesB, p + 1))}
                         className="px-2.5 py-1 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition text-slate-200"
                       >
                         Next Page →
@@ -1583,10 +1584,10 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                 {/* DUAL SLIDE VIEW: VISUAL PDF (Default) vs REDLINE with Draggable Split Adjuster */}
                 {slideDisplayMode === 'visual' ? (
                   <div
-                    ref={splitContainerRef}
-                    className="relative flex flex-col lg:flex-row w-full gap-3 lg:gap-0 select-none overflow-hidden rounded-2xl"
+                    ref={containerRef}
+                    className="relative flex flex-col lg:flex-row gap-4 lg:gap-2 items-start justify-start w-full overflow-hidden"
                   >
-                    {/* SLIDE A: Staging Master / Approved Word Reference Standard */}
+                    {/* SLIDE A: Approved Master Reference Document (100% Clean Baseline - Untouched) */}
                     <div
                       className="w-full min-w-0"
                       style={{
@@ -1596,7 +1597,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                       }}
                     >
                       {isDocxA ? (
-                        <DocxVisualViewer
+                        <WordDocViewer
                           file={fileA}
                           docxHtml={docxHtmlA}
                           text={textA}
@@ -1612,16 +1613,16 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                           pdfUrl={pdfUrlA || pdfA}
                           imageSrc={initialImageA}
                           title={docAName || 'Document A (Approved ISI Master Reference)'}
-                          badge="Slide A"
-                          subtitle="✓ Approved Master Reference ISI"
+                          badge="Slide A (Reference)"
+                          subtitle="✓ Approved Master Reference ISI (Clean)"
                           isAuditTarget={false}
                           isWordToPdf={isWordToPdf}
                           isIsiComparison={isIsiComparison}
                           isiLineResults={EMPTY_DISCREPANCIES}
                           scale={pdfZoom}
-                          pageNumber={pdfPage}
-                          onPageChange={setPdfPage}
-                          onTotalPagesChange={(pages) => setPdfTotalPages((prev) => Math.max(prev, pages))}
+                          pageNumber={pdfPageA}
+                          onPageChange={setPdfPageA}
+                          onTotalPagesChange={(pages) => setPdfTotalPagesA(pages)}
                           scrollRef={leftSlideRef}
                           onScroll={handleLeftScroll}
                           discrepancies={EMPTY_DISCREPANCIES}
@@ -1665,16 +1666,16 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                         pdfUrl={pdfUrlB || pdfB}
                         imageSrc={initialImageB}
                         title={docBName || 'Document B (Mass Emailer Audit Target)'}
-                        badge="Slide B"
+                        badge="Slide B (Target)"
                         subtitle="⚠ Target Document (ISI Mode - Non-ISI Elements Ignored)"
                         isAuditTarget={true}
                         isWordToPdf={isWordToPdf}
                         isIsiComparison={isIsiComparison}
                         isiLineResults={activeLineResultsB}
                         scale={pdfZoom}
-                        pageNumber={pdfPage}
-                        onPageChange={setPdfPage}
-                        onTotalPagesChange={(pages) => setPdfTotalPages((prev) => Math.max(prev, pages))}
+                        pageNumber={pdfPageB}
+                        onPageChange={setPdfPageB}
+                        onTotalPagesChange={(pages) => setPdfTotalPagesB(pages)}
                         scrollRef={rightSlideRef}
                         onScroll={handleRightScroll}
                         discrepancies={proofreadingErrors.filter((e) => !e.isMarketing)}

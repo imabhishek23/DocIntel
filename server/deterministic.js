@@ -1140,7 +1140,7 @@ export function extractCanonicalStatements(textA) {
 }
 
 const COMPOSITE_NON_ISI_LINE_REGEX =
-  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|CONTINUED\s+BELOW|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|Additional\s+Important\s+Safety\s+Information|continued\s+b[ea]low|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
+  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
 
 const COMPOSITE_ISI_START_REGEX =
   /^(?:<b>\s*)?(?:[A-Z0-9\s-]+\|\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(?:&|and)\s*Important\s+Safety\s+Information|Contraindications?|Warnings\s*(?:and|&)\s*Precautions|Adverse\s+Reactions|Boxed\s+Warning|Safety\s+Considerations)/i;
@@ -1256,9 +1256,14 @@ function computeSubsequenceFuzzyScore(cTokens, cStart, bNorm) {
 function tokensFuzzyMatch(cNorm, bNorm) {
   if (!cNorm || !bNorm) return false;
   if (cNorm === bNorm) return true;
-  if (cNorm.includes(bNorm) || bNorm.includes(cNorm)) return true;
+  // Short words (<= 3 characters) must match exactly
+  if (cNorm.length <= 3 || bNorm.length <= 3) return false;
+  // Prefix/stem match for words >= 5 characters
+  if (cNorm.length >= 5 && bNorm.length >= 5) {
+    if (cNorm.startsWith(bNorm) || bNorm.startsWith(cNorm)) return true;
+  }
   const maxLen = Math.max(cNorm.length, bNorm.length);
-  const maxDist = maxLen >= 8 ? 3 : 2;
+  const maxDist = maxLen >= 8 ? 2 : 1;
   if (levenshteinDist(cNorm, bNorm) <= maxDist) return true;
   return false;
 }
@@ -1347,7 +1352,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     const bTokens = lineB.tokens || extractStyledTokensHelper(lineB.raw || cleanLine);
     const bNorm = bTokens.map((t) => t.norm);
 
-    // Continuation marker: e.g. "(cont'd)" or "IMPORTANT SAFETY INFORMATION (cont'd)"
+    // Continuation marker: e.g. "(cont'd)" or "IMPORTANT SAFETY INFORMATION (cont'd)" or "Additional Important Safety Information continued below."
     const nextLineObj = lIdx + 1 < linesB.length ? linesB[lIdx + 1] : null;
     const nextLineClean = nextLineObj ? (typeof nextLineObj === 'string' ? nextLineObj : nextLineObj.clean) : '';
     const isNextContd = /^\(?cont['’]?d\)?$/i.test(nextLineClean);
@@ -1355,7 +1360,10 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     if (
       /^\(?cont['’]?d\)?$/i.test(cleanLine) ||
       /^IMPORTANT SAFETY INFORMATION\s*\(?cont['’]?d\)?$/i.test(cleanLine) ||
-      (/^IMPORTANT SAFETY INFORMATION$/i.test(cleanLine) && isNextContd)
+      (/^IMPORTANT SAFETY INFORMATION$/i.test(cleanLine) && isNextContd) ||
+      /^(?:Additional\s+)?Important\s+Safety\s+Information\s*(?:continued\s+b[ea]low)?\.?$/i.test(cleanLine) ||
+      /^Additional\s+Important\s+Safety\s+Information/i.test(cleanLine) ||
+      /^continued\s+b[ea]low\.?$/i.test(cleanLine)
     ) {
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
@@ -1371,20 +1379,6 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         found: cleanLine,
         section: 'Important Safety Information',
       });
-      // Advance cCursor past any matching continuation header in canonical reference
-      for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 25); searchPos++) {
-        const refLineIdx = canonicalTokens[searchPos].refLineIndex;
-        const refLineClean = linesA[refLineIdx]?.clean || '';
-        if (/important safety information\s*\(?cont['’]?d\)?/i.test(refLineClean) || /^\(?cont['’]?d\)?$/i.test(refLineClean)) {
-          let nextP = searchPos;
-          while (nextP < canonicalTokens.length && canonicalTokens[nextP].refLineIndex === refLineIdx) {
-            nextP++;
-          }
-          cCursor = nextP;
-          lastConsumedRefLine = refLineIdx;
-          break;
-        }
-      }
       continue;
     }
 
@@ -1409,8 +1403,6 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         found: cleanLine,
         section: 'Important Safety Information',
       });
-
-
 
       mismatchReport.push({
         index: mismatchReport.length + 1,
@@ -1444,6 +1436,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     // Find best match in canonical tokens starting strictly forward from cCursor
     let bestStart = -1;
     let bestScore = 0;
+    let bestRawScore = 0;
 
     // First, test if cCursor is already the continuous match (sequence continuity)
     const compareLen = Math.min(bNorm.length, 6);
@@ -1452,15 +1445,16 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     if (ratioAtCursor >= 0.85) {
       bestStart = cCursor;
       bestScore = ratioAtCursor;
+      bestRawScore = ratioAtCursor;
     } else {
       if (ratioAtCursor >= 0.35 || (compareLen === 1 && ratioAtCursor > 0)) {
         bestStart = cCursor;
         bestScore = ratioAtCursor;
+        bestRawScore = ratioAtCursor;
       }
-      for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 80); searchPos++) {
+      for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 120); searchPos++) {
         // Guard: short lines (<= 2 tokens) cannot jump far ahead without an exact match
         if (bNorm.length <= 2 && (searchPos - cCursor > 4)) {
-          // Only allowed if all tokens match exactly
           let exactAll = true;
           for (let k = 0; k < bNorm.length; k++) {
             if (searchPos + k >= canonicalTokens.length || canonicalTokens[searchPos + k].norm !== bNorm[k]) {
@@ -1471,39 +1465,64 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
           if (!exactAll) continue;
         }
 
-        // Subsequence matching allows for split words or extra words without de-synchronizing
         const rawScore = computeSubsequenceFuzzyScore(canonicalTokens, searchPos, subseqNorm);
-        const distPenalty = (searchPos - cCursor) * 0.015;
+        const distPenalty = (searchPos - cCursor) * 0.005;
         const weightedScore = rawScore - distPenalty;
-        if (rawScore >= 0.4 && (weightedScore > bestScore || (rawScore === 1 && searchPos > cCursor && bestScore < 0.9))) {
+
+        if (rawScore === 1) {
+          const isAtLineStart = canonicalTokens[searchPos].tokenIndex === 0;
+          const bestWasLineStart = bestStart >= 0 && canonicalTokens[bestStart].tokenIndex === 0;
+
+          if (bestRawScore < 1) {
+            bestScore = weightedScore;
+            bestRawScore = 1;
+            bestStart = searchPos;
+          } else if (isAtLineStart && !bestWasLineStart) {
+            bestScore = weightedScore;
+            bestRawScore = 1;
+            bestStart = searchPos;
+          }
+          if (searchPos === cCursor) break;
+          continue;
+        }
+
+        if (bestRawScore < 1 && rawScore >= 0.4 && weightedScore > bestScore) {
           bestScore = weightedScore;
+          bestRawScore = rawScore;
           bestStart = searchPos;
-          if (rawScore === 1 && searchPos === cCursor) break;
         }
       }
     }
 
-    if (bestStart === -1 && cCursor > 10) {
-      // Check if document restarts ISI section from beginning (e.g. Desktop layout following Mobile layout)
-      for (let searchPos = 0; searchPos < Math.min(canonicalTokens.length, 30); searchPos++) {
-        let matchCount = 0;
-        const compareLen = Math.min(bNorm.length, 6);
-        for (let k = 0; k < compareLen; k++) {
-          if (searchPos + k < canonicalTokens.length) {
-            const cTok = canonicalTokens[searchPos + k];
-            if (cTok.norm === bNorm[k] || (cTok.norm && bNorm[k] && (cTok.norm.includes(bNorm[k]) || bNorm[k].includes(cTok.norm)))) {
-              matchCount++;
+    if (bestStart === -1) {
+      // Search globally in canonical tokens (handles document restarting ISI, desktop repeating mobile, or split layouts)
+      let globalBestScore = 0;
+      let globalBestStart = -1;
+      for (let searchPos = 0; searchPos < canonicalTokens.length; searchPos++) {
+        if (bNorm.length <= 2) {
+          let exactAll = true;
+          for (let k = 0; k < bNorm.length; k++) {
+            if (searchPos + k >= canonicalTokens.length || canonicalTokens[searchPos + k].norm !== bNorm[k]) {
+              exactAll = false;
+              break;
             }
           }
+          if (!exactAll) continue;
         }
-        const score = matchCount / compareLen;
-        if (score > bestScore && score >= 0.5) {
-          bestScore = score;
-          bestStart = searchPos;
-          cCursor = searchPos;
-          lastConsumedRefLine = -1;
-          if (score === 1) break;
+
+        const rawScore = computeSubsequenceFuzzyScore(canonicalTokens, searchPos, subseqNorm);
+        if (rawScore > globalBestScore && rawScore >= 0.5) {
+          globalBestScore = rawScore;
+          globalBestStart = searchPos;
+          if (rawScore === 1 && canonicalTokens[searchPos].tokenIndex === 0) break;
         }
+      }
+
+      if (globalBestStart !== -1) {
+        bestStart = globalBestStart;
+        bestScore = globalBestScore;
+        cCursor = globalBestStart;
+        lastConsumedRefLine = canonicalTokens[globalBestStart]?.refLineIndex ?? -1;
       }
     }
 
@@ -1548,34 +1567,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       continue;
     }
 
-    // Check if entire reference lines in PDF A were skipped between lastConsumedRefLine and currRefLine (Requirement 7)
     const currRefLine = canonicalTokens[bestStart]?.refLineIndex ?? -1;
-    if (currRefLine > lastConsumedRefLine + 1) {
-      const startSkipped = Math.max(0, lastConsumedRefLine + 1);
-      for (let skippedRef = startSkipped; skippedRef < currRefLine; skippedRef++) {
-        mismatchReport.push({
-          index: mismatchReport.length + 1,
-          id: `missing_ref_${skippedRef + 1}`,
-          page: linesA[skippedRef]?.page || 1,
-          section: 'Important Safety Information',
-          originalWordText: linesA[skippedRef].clean,
-          pdfText: '(missing in Composite PDF)',
-          errorType: 'Missing Line',
-          severity: 'critical',
-          details: `Missing line: "${linesA[skippedRef].clean}"`,
-          isMissingWord: true,
-        });
-
-        proofreadingErrors.push({
-          id: `missing_ref_${skippedRef + 1}`,
-          category: 'Missing Line',
-          severity: 'critical',
-          expected: linesA[skippedRef].clean,
-          found: '(missing in Composite PDF)',
-          details: `Missing line: "${linesA[skippedRef].clean}"`,
-        });
-      }
-    }
 
     // Compare each token of line B strictly against canonical tokens of this line (Requirement 1, 2, 3, 6)
     const issues = [];
@@ -1899,9 +1891,14 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     } else {
       const comment = issues.join('; ');
       const cleanLineNoPunct = cleanLine.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '');
-      const isWholeLineError = wordErrors.some(
-        (we) => we.clean && we.clean.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '') === cleanLineNoPunct
-      );
+      const changedOrExtraCount = wordErrors.filter(
+        (we) => we.type === 'word_changed' || we.type === 'extra_word'
+      ).length;
+      const isMajorityChanged = bTokens.length >= 3 && (changedOrExtraCount / bTokens.length >= 0.5);
+      const isWholeLineError =
+        wordErrors.some(
+          (we) => we.clean && we.clean.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '') === cleanLineNoPunct
+        ) || isMajorityChanged;
 
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
@@ -1911,12 +1908,12 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         page: lineB.page || 1,
         box: lineB.box || null,
         color: isWholeLineError ? 'red' : 'green', // If whole line is mismatched, mark line in red! Otherwise green line with red word boxes
-        status: isWholeLineError ? 'mismatched' : 'matched_with_word_errors',
+        status: isWholeLineError ? (isMajorityChanged ? 'extra_line' : 'mismatched') : 'matched_with_word_errors',
         hasWordErrors: true,
         comment,
         issues,
         wordErrors,
-        expected: targetLineText,
+        expected: isMajorityChanged ? '(none)' : targetLineText,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
       });
