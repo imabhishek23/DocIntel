@@ -1140,7 +1140,7 @@ export function extractCanonicalStatements(textA) {
 }
 
 const COMPOSITE_NON_ISI_LINE_REGEX =
-  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
+  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*(?:≥|>=)|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*(?:≥|>=)|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
 
 const COMPOSITE_ISI_START_REGEX =
   /^(?:<b>\s*)?(?:[A-Z0-9\s-]+\|\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(?:&|and)\s*Important\s+Safety\s+Information|Contraindications?|Warnings\s*(?:and|&)\s*Precautions|Adverse\s+Reactions|Boxed\s+Warning|Safety\s+Considerations)/i;
@@ -1210,7 +1210,11 @@ export function extractClassifiedLinesFromPdf(textB) {
         tokens: extractStyledTokensHelper(cleanRaw),
       });
 
-      if (/is not approved promotional material\.?$/i.test(clean) || /For editorial QA training only/i.test(clean)) {
+      if (
+        /is not approved promotional material\.?$/i.test(clean) ||
+        /For editorial QA training only/i.test(clean) ||
+        /^(?:CONTINUED\s+BELOW|Additional\s+Important\s+Safety\s+Information\s*continued\s*below)/i.test(clean)
+      ) {
         inIsi = false;
       }
     } else {
@@ -1359,12 +1363,29 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
     if (
       /^\(?cont['’]?d\)?$/i.test(cleanLine) ||
-      /^IMPORTANT SAFETY INFORMATION\s*\(?cont['’]?d\)?$/i.test(cleanLine) ||
+      /^IMPORTANT SAFETY INFORMATION\s*\(cont['’]?d\)$/i.test(cleanLine) ||
       (/^IMPORTANT SAFETY INFORMATION$/i.test(cleanLine) && isNextContd) ||
-      /^(?:Additional\s+)?Important\s+Safety\s+Information\s*(?:continued\s+b[ea]low)?\.?$/i.test(cleanLine) ||
-      /^Additional\s+Important\s+Safety\s+Information/i.test(cleanLine) ||
-      /^continued\s+b[ea]low\.?$/i.test(cleanLine)
+      /^Additional\s+Important\s+Safety\s+Information(?:\s+continued\s+b[ea]low)?\.?$/i.test(cleanLine) ||
+      /^(?:Important\s+Safety\s+Information\s+)?continued\s+b[ea]low\.?$/i.test(cleanLine)
     ) {
+      let refMatchedIdx = -1;
+      for (let look = cCursor; look < Math.min(cCursor + 10, canonicalTokens.length); look++) {
+        const refLineIdx = canonicalTokens[look].refLineIndex;
+        const refLineClean = linesA[refLineIdx]?.clean || '';
+        if (
+          refLineClean.toLowerCase() === cleanLine.toLowerCase() ||
+          (/^IMPORTANT SAFETY INFORMATION\s*\(cont['’]?d\)$/i.test(cleanLine) &&
+            /^IMPORTANT SAFETY INFORMATION\s*\(cont['’]?d\)$/i.test(refLineClean))
+        ) {
+          refMatchedIdx = refLineIdx;
+          while (cCursor < canonicalTokens.length && canonicalTokens[cCursor].refLineIndex === refMatchedIdx) {
+            cCursor++;
+          }
+          lastConsumedRefLine = refMatchedIdx;
+          break;
+        }
+      }
+
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
         lineNum: lIdx + 1,
@@ -1374,7 +1395,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         box: lineB.box || null,
         color: 'green',
         status: 'matched',
-        comment: 'Continuation Header',
+        comment: refMatchedIdx >= 0 ? 'Complete line match' : 'Continuation Header',
         expected: cleanLine,
         found: cleanLine,
         section: 'Important Safety Information',
@@ -1945,32 +1966,9 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     }
   }
 
-  // Check remaining unconsumed reference lines in PDF A (Requirement 7)
-  if (lastConsumedRefLine < linesA.length - 1) {
-    for (let unconsumedRef = lastConsumedRefLine + 1; unconsumedRef < linesA.length; unconsumedRef++) {
-      mismatchReport.push({
-        index: mismatchReport.length + 1,
-        id: `missing_ref_${unconsumedRef + 1}`,
-        page: linesA[unconsumedRef]?.page || 1,
-        section: 'Important Safety Information',
-        originalWordText: linesA[unconsumedRef].clean,
-        pdfText: '(missing in Composite PDF)',
-        errorType: 'Missing Line',
-        severity: 'critical',
-        details: `Missing line: "${linesA[unconsumedRef].clean}"`,
-        isMissingWord: true,
-      });
-
-      proofreadingErrors.push({
-        id: `missing_ref_${unconsumedRef + 1}`,
-        category: 'Missing Line',
-        severity: 'critical',
-        expected: linesA[unconsumedRef].clean,
-        found: '(missing in Composite PDF)',
-        details: `Missing line: "${linesA[unconsumedRef].clean}"`,
-      });
-    }
-  }
+  // In mass emailers (and mobile teasers), Document B only includes the teaser or relevant ISI portion.
+  // User Rule: Ignore non-ISI elements. If any element from PDF A is not available in PDF B, do not report it as missing.
+  // Compare and report errors only for discrepancies and extra unapproved lines present in PDF B.
 
   const matchedLines = isiLineResultsB.filter((r) => r.color === 'green').length;
   const totalLines = isiLineResultsB.length;

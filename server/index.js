@@ -181,7 +181,7 @@ app.post(
         if (/\.docx$/i.test(nameA)) {
           docxHtmlA = await extractDocxHtml(fileA.buffer);
         }
-        if (req.body.textA && req.body.textA.trim().length > 0) {
+        if (req.body.textA && req.body.textA.trim().length > 0 && !/\.pdf$/i.test(nameA)) {
           textA = req.body.textA.trim();
         } else {
           textA = await extractDocumentText(nameA, fileA.buffer);
@@ -202,7 +202,7 @@ app.post(
         if (/\.docx$/i.test(nameB)) {
           docxHtmlB = await extractDocxHtml(fileB.buffer);
         }
-        if (req.body.textB && req.body.textB.trim().length > 0) {
+        if (req.body.textB && req.body.textB.trim().length > 0 && !/\.pdf$/i.test(nameB)) {
           textB = req.body.textB.trim();
         } else {
           textB = await extractDocumentText(nameB, fileB.buffer);

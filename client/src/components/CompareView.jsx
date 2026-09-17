@@ -142,15 +142,15 @@ export default function CompareView({ onOpenQA }) {
         } catch (_) {}
       }
 
-      const uploadFileA = await compressPdfIfNeeded(fileA, 3.2 * 1024 * 1024);
-      const uploadFileB = await compressPdfIfNeeded(fileB, 3.2 * 1024 * 1024);
+      const uploadFileA = await compressPdfIfNeeded(fileA, 25 * 1024 * 1024);
+      const uploadFileB = await compressPdfIfNeeded(fileB, 25 * 1024 * 1024);
 
       const data = await compareDocuments({
         fileA: uploadFileA,
-        textA: extractedTextA || (fileA ? null : textA),
+        textA: fileA ? null : (extractedTextA || textA),
         nameA: fileA ? fileA.name : (textA.includes('Vandaprex') ? 'Approved Word Master' : 'Original Draft (A)'),
         fileB: uploadFileB,
-        textB: extractedTextB || (fileB ? null : textB),
+        textB: fileB ? null : (extractedTextB || textB),
         nameB: fileB ? fileB.name : (textB.includes('Vandaprex') ? 'Promotional PDF Target' : 'Revised Draft (B)'),
       });
 

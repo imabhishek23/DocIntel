@@ -103,7 +103,150 @@ function computePageHighlights(
   });
 
   // ── STRICT ISI LINE-BY-LINE VISUAL HIGHLIGHTING (Slide B Target Document) ──
-  if ((isIsiComparison || (Array.isArray(isiLineResults) && isiLineResults.length > 0)) && itemBoxes.length > 0) {
+  const isIsiTarget = isIsiComparison || (Array.isArray(isiLineResults) && isiLineResults.length > 0);
+  const pageBoxesFromIsi = isIsiTarget
+    ? (isiLineResults || []).filter(
+        (l) => (l.page || l.box?.page || 1) === (safePageNum || 1) && l.box
+      )
+    : [];
+
+  const computeDirectIsiHighlights = () => {
+    const directHighlights = [];
+    for (let idx = 0; idx < pageBoxesFromIsi.length; idx++) {
+      const lr = pageBoxesFromIsi[idx];
+      const rect = viewport.convertToViewportRectangle([
+        lr.box.x,
+        lr.box.y,
+        lr.box.x + lr.box.w,
+        lr.box.y + lr.box.h,
+      ]);
+      const cssBox = {
+        x: Math.round(Math.min(rect[0], rect[2]) / dpr),
+        y: Math.round(Math.min(rect[1], rect[3]) / dpr),
+        w: Math.max(10, Math.round(Math.abs(rect[2] - rect[0]) / dpr)),
+        h: Math.max(12, Math.round(Math.abs(rect[3] - rect[1]) / dpr)),
+      };
+
+      const isMatch = lr.color === 'green' && (!lr.wordErrors || lr.wordErrors.length === 0);
+      const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
+
+      if (isMatch) {
+        directHighlights.push({
+          id: `isi_box_match_${lr.lineNum || lr.lineIndex || idx}`,
+          index: lr.lineNum || lr.lineIndex || idx,
+          target: lr.text,
+          box: cssBox,
+          boxes: [cssBox],
+          isMatch: true,
+          isError: false,
+          color: 'rgba(34, 197, 94, 0.28)',
+          borderColor: '#16a34a',
+          comment: lr.comment || 'Complete line match',
+          category: 'Approved ISI Line',
+          severity: 'low',
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+          lineResult: lr,
+        });
+      } else if (hasWordErrors) {
+        directHighlights.push({
+          id: `isi_box_line_${lr.lineNum || lr.lineIndex || idx}`,
+          index: lr.lineNum || lr.lineIndex || idx,
+          target: lr.text,
+          box: cssBox,
+          boxes: [cssBox],
+          isMatch: true,
+          isError: false,
+          color: 'rgba(34, 197, 94, 0.20)',
+          borderColor: '#22c55e',
+          comment: lr.comment || 'Line match with discrepancies',
+          category: 'Approved ISI Line',
+          severity: 'medium',
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+          lineResult: lr,
+        });
+
+        lr.wordErrors.forEach((we, wIdx) => {
+          const weWord = we.word || we.clean;
+          if (!weWord) return;
+          const idxInLine = lr.text.toLowerCase().indexOf(weWord.toLowerCase());
+          const charW = cssBox.w / (lr.text.length || 1);
+          const wordX = idxInLine >= 0 ? Math.round(cssBox.x + idxInLine * charW) : cssBox.x;
+          const wordW = Math.max(14, Math.round((weWord.length || 3) * charW));
+          const wordBox = {
+            x: wordX,
+            y: Math.max(0, cssBox.y - 1),
+            w: wordW,
+            h: cssBox.h + 2,
+          };
+
+          const errCategory =
+            we.type === 'spelling'
+              ? 'Spelling Mistake'
+              : we.type === 'spacing'
+              ? 'Spacing Difference'
+              : we.type === 'formatting'
+              ? 'Bold / Italic Formatting'
+              : we.type === 'color' || we.type === 'color_mismatch'
+              ? 'Color Mismatch'
+              : we.type === 'capitalization'
+              ? 'Capitalization Difference'
+              : we.type === 'punctuation_missing' || we.type === 'punctuation'
+              ? 'Punctuation Difference'
+              : 'Word Discrepancy';
+
+          directHighlights.push({
+            id: `isi_box_word_${lr.lineNum || lr.lineIndex || idx}_${wIdx}`,
+            index: lr.lineNum || lr.lineIndex || idx,
+            target: weWord,
+            box: wordBox,
+            boxes: [wordBox],
+            isMatch: false,
+            isError: true,
+            isWordDiscrepancy: true,
+            color: 'rgba(239, 68, 68, 0.50)',
+            borderColor: '#dc2626',
+            comment: we.issue || 'Discrepancy',
+            category: errCategory,
+            severity: 'high',
+            expected: we.expected,
+            found: weWord,
+            details: we.issue,
+            lineResult: lr,
+          });
+        });
+      } else {
+        directHighlights.push({
+          id: `isi_box_err_${lr.lineNum || lr.lineIndex || idx}`,
+          index: lr.lineNum || lr.lineIndex || idx,
+          target: lr.text,
+          box: cssBox,
+          boxes: [cssBox],
+          isMatch: false,
+          isError: true,
+          color: 'rgba(239, 68, 68, 0.38)',
+          borderColor: '#dc2626',
+          comment: lr.comment || 'Discrepancy / Unapproved Line',
+          category: lr.status === 'extra_line' ? 'Extra Line' : 'ISI Discrepancy',
+          severity: 'high',
+          expected: lr.expected || '',
+          found: lr.found || lr.text,
+          details: lr.comment || '',
+          lineResult: lr,
+        });
+      }
+    }
+    return directHighlights;
+  };
+
+  // If page is scanned/image-based (fewer than 25 vector text items), use direct OCR bounding boxes
+  if (isIsiTarget && itemBoxes.length < 25 && pageBoxesFromIsi.length > 0) {
+    const directHls = computeDirectIsiHighlights();
+    if (directHls.length > 0) return directHls;
+  }
+
+  if (isIsiTarget && itemBoxes.length > 0) {
     // 1. Group rendered PDF text items into distinct visual lines by canvas screen Y coordinates (top-to-bottom)
     const sortedItems = [...itemBoxes]
       .filter((it) => it.cleanStr)
@@ -392,6 +535,12 @@ function computePageHighlights(
     if (highlights.length > 0) {
       return highlights;
     }
+  }
+
+  // Fallback: If vector matching found 0 highlights, but direct OCR bounding boxes exist:
+  if (isIsiTarget && pageBoxesFromIsi.length > 0) {
+    const directHls = computeDirectIsiHighlights();
+    if (directHls.length > 0) return directHls;
   }
 
   // In ISI comparison mode, if highlights were computed above, return them.
