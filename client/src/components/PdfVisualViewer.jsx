@@ -127,8 +127,17 @@ function computePageHighlights(
         h: Math.max(12, Math.round(Math.abs(rect[3] - rect[1]) / dpr)),
       };
 
-      const isMatch = lr.color === 'green' && (!lr.wordErrors || lr.wordErrors.length === 0);
-      const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
+      // User Requirement: Check words/sentences only! Leave color, bold, italic, and formatting alone.
+      const realWordErrors = (lr.wordErrors || []).filter(
+        (we) =>
+          we.type === 'spelling' ||
+          we.type === 'word_changed' ||
+          we.type === 'extra_word' ||
+          we.type === 'missing_word' ||
+          we.type === 'number'
+      );
+      const isMatch = lr.color === 'green' && realWordErrors.length === 0;
+      const hasWordErrors = realWordErrors.length > 0;
 
       if (isMatch) {
         directHighlights.push({
@@ -167,7 +176,7 @@ function computePageHighlights(
           lineResult: lr,
         });
 
-        lr.wordErrors.forEach((we, wIdx) => {
+        realWordErrors.forEach((we, wIdx) => {
           const weWord = we.word || we.clean;
           if (!weWord) return;
           const idxInLine = lr.text.toLowerCase().indexOf(weWord.toLowerCase());
@@ -374,8 +383,17 @@ function computePageHighlights(
         const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
         const safeLineBox = { ...pl.box, h: safeLineH };
 
-        const isMatch = matchedLr.color === 'green' && (!matchedLr.wordErrors || matchedLr.wordErrors.length === 0);
-        const hasWordErrors = Array.isArray(matchedLr.wordErrors) && matchedLr.wordErrors.length > 0;
+        // User Requirement: Check words/sentences only! Leave color, bold, italic, and formatting alone.
+        const realWordErrors = (matchedLr.wordErrors || []).filter(
+          (we) =>
+            we.type === 'spelling' ||
+            we.type === 'word_changed' ||
+            we.type === 'extra_word' ||
+            we.type === 'missing_word' ||
+            we.type === 'number'
+        );
+        const hasWordErrors = realWordErrors.length > 0;
+        const isMatch = matchedLr.color === 'green' && !hasWordErrors;
         const isLineMatch = matchedLr.color === 'green';
 
         // Base line highlight:
@@ -436,7 +454,7 @@ function computePageHighlights(
 
         // Word error localized highlights inside this visual line
         if (hasWordErrors) {
-          matchedLr.wordErrors.forEach((we, wIdx) => {
+          realWordErrors.forEach((we, wIdx) => {
             const weWord = (we.word || '').trim();
             if (!weWord) return;
 

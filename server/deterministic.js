@@ -1121,9 +1121,11 @@ export function extractCanonicalStatements(textA) {
     if (!clean) continue;
 
     const isHeading =
-      /^(?:Prescribing Information|Indication|Important Safety Information(?:\s*\(cont[’']?d\))?|References|Contraindications|Warnings\s*(?:and|&)\s*Precautions|Adverse Reactions)/i.test(
+      /^(?:Prescribing Information|Indication(?:\s*and\s*Usage)?|Important Safety Information(?:\s*\(cont[’']?d\))?|References|Contraindications|Warnings\s*(?:and|&)\s*Precautions|Adverse Reactions|Boxed Warning|Drug Interactions|Use in Specific Populations)/i.test(
         clean
-      );
+      ) ||
+      /^[A-Z][A-Za-z0-9\s,&’'-]+:$/.test(clean) ||
+      /^(?:Hepatotoxicity|Depressive Disorders|Risk of Reduced|Hypersensitivity Reactions|Lactation|Pediatrics)/i.test(clean);
     const isBullet = /^[•\-\*]/.test(clean);
     const isNumber = /^\d+\./.test(clean);
     const isPleaseSee = /^Please see full/i.test(clean);
@@ -1242,9 +1244,14 @@ export function extractIsiLinesFromPdf(textB) {
 
 
 function computeSubsequenceFuzzyScore(cTokens, cStart, bNorm) {
-  let cIdx = cStart;
-  let matches = 0;
-  for (let bIdx = 0; bIdx < bNorm.length; bIdx++) {
+  if (cStart >= cTokens.length || bNorm.length === 0) return 0;
+  // First token of line B must match at cStart (no offset for the line's starting token)
+  if (!tokensFuzzyMatch(cTokens[cStart].norm, bNorm[0])) {
+    return 0;
+  }
+  let cIdx = cStart + 1;
+  let matches = 1;
+  for (let bIdx = 1; bIdx < bNorm.length; bIdx++) {
     const bt = bNorm[bIdx];
     for (let offset = 0; offset <= 2 && cIdx + offset < cTokens.length; offset++) {
       if (tokensFuzzyMatch(cTokens[cIdx + offset].norm, bt)) {
@@ -1254,7 +1261,7 @@ function computeSubsequenceFuzzyScore(cTokens, cStart, bNorm) {
       }
     }
   }
-  return bNorm.length > 0 ? matches / bNorm.length : 0;
+  return matches / bNorm.length;
 }
 
 function tokensFuzzyMatch(cNorm, bNorm) {
@@ -1590,13 +1597,48 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
     const currRefLine = canonicalTokens[bestStart]?.refLineIndex ?? -1;
 
-    // Compare each token of line B strictly against canonical tokens of this line (Requirement 1, 2, 3, 6)
+    // Compare each token of line B strictly against canonical tokens of this line
+    // User Requirement: Check words/sentences only! Ignore color, bold, italic, font size, minor punctuation/capitalization differences.
     const issues = [];
     const wordErrors = [];
     let tokenCursor = bestStart;
     let bIdx = 0;
 
+    // Skip leading bullets or symbol-only markers on either side
+    while (
+      tokenCursor < canonicalTokens.length &&
+      (canonicalTokens[tokenCursor].isSymbolOnly || /^[•\-\*\+]$/.test(canonicalTokens[tokenCursor].raw))
+    ) {
+      if (
+        bIdx < bTokens.length &&
+        (bTokens[bIdx].isSymbolOnly || /^[•\-\*\+]$/.test(bTokens[bIdx].raw))
+      ) {
+        bIdx++;
+      }
+      tokenCursor++;
+    }
+    while (
+      bIdx < bTokens.length &&
+      (bTokens[bIdx].isSymbolOnly || /^[•\-\*\+]$/.test(bTokens[bIdx].raw))
+    ) {
+      bIdx++;
+    }
+
     while (bIdx < bTokens.length) {
+      // Skip symbol-only bullets (•, *, +, -) if encountered mid-stream
+      if (
+        tokenCursor < canonicalTokens.length &&
+        canonicalTokens[tokenCursor].isSymbolOnly &&
+        !canonicalTokens[tokenCursor].norm
+      ) {
+        tokenCursor++;
+        continue;
+      }
+      if (bTokens[bIdx].isSymbolOnly && !bTokens[bIdx].norm) {
+        bIdx++;
+        continue;
+      }
+
       const bt = bTokens[bIdx];
       if (tokenCursor >= canonicalTokens.length) {
         const issueMsg = `Extra word: "${bt.raw}"`;
@@ -1615,194 +1657,53 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       }
 
       const ct = canonicalTokens[tokenCursor];
+      const normA = ct.norm || '';
+      const normB = bt.norm || '';
+      const cleanA = (ct.clean || '').toLowerCase();
+      const cleanB = (bt.clean || '').toLowerCase();
 
-      // 1. Direct norm match
-      if (ct.norm === bt.norm) {
-        // Color difference check (User Requirement: detect and mark color differences in ISI)
-        const catA = ct.colorCategory || 'black';
-        const catB = bt.colorCategory || 'black';
-        const isColorMismatch =
-          catA !== catB &&
-          !(catA === 'black' && catB === 'gray') &&
-          !(catA === 'gray' && catB === 'black');
-
-        if (isColorMismatch) {
-          let groupFoundWords = [bt.raw];
-          let groupExpectedWords = [ct.raw];
-          let nextB = bIdx + 1;
-          let nextC = tokenCursor + 1;
-
-          while (
-            nextB < bTokens.length &&
-            nextC < canonicalTokens.length &&
-            bTokens[nextB].norm === canonicalTokens[nextC].norm &&
-            (bTokens[nextB].colorCategory || 'black') === catB
-          ) {
-            groupFoundWords.push(bTokens[nextB].raw);
-            groupExpectedWords.push(canonicalTokens[nextC].raw);
-            nextB++;
-            nextC++;
-          }
-
-          const foundPhrase = groupFoundWords.join(' ');
-          const expPhrase = groupExpectedWords.join(' ');
-          const foundColorDesc =
-            catB === 'red'
-              ? 'crimson/red'
-              : catB === 'blue'
-              ? 'blue hyperlink'
-              : `${catB}`;
-          const expColorDesc = catA === 'black' ? 'black' : `${catA}`;
-          const issueMsg = `Color mismatch: found ${foundColorDesc} text "${foundPhrase}", expected ${expColorDesc} text`;
-
-          issues.push(issueMsg);
-          wordErrors.push({
-            word: foundPhrase,
-            clean: foundPhrase.replace(/^[.,;:!?'"–—\-()\[\]]+|[.,;:!?'"–—\-()\[\]]+$/g, ''),
-            expected: `${expPhrase} (${expColorDesc} text)`,
-            issue: issueMsg,
-            type: 'color',
-            bStartIdx: bIdx,
-            bEndIdx: nextB,
-          });
-
-          bIdx = nextB;
-          tokenCursor = nextC;
-          continue;
-        }
-
-        // Font style difference (Bold / Italic)
-        if (bt.isItalic !== ct.isItalic || bt.isBold !== ct.isBold) {
-          let groupFoundWords = [bt.raw];
-          let groupExpectedWords = [ct.raw];
-          let nextB = bIdx + 1;
-          let nextC = tokenCursor + 1;
-
-          while (
-            nextB < bTokens.length &&
-            nextC < canonicalTokens.length &&
-            bTokens[nextB].norm === canonicalTokens[nextC].norm &&
-            (bTokens[nextB].isItalic !== canonicalTokens[nextC].isItalic || bTokens[nextB].isBold !== canonicalTokens[nextC].isBold)
-          ) {
-            groupFoundWords.push(bTokens[nextB].raw);
-            groupExpectedWords.push(canonicalTokens[nextC].raw);
-            nextB++;
-            nextC++;
-          }
-
-          const foundStyle = bt.isBold && bt.isItalic ? 'bold italic' : bt.isBold ? 'bold' : bt.isItalic ? 'italic' : 'regular';
-          const expStyle = ct.isBold && ct.isItalic ? 'bold italic' : ct.isBold ? 'bold' : ct.isItalic ? 'italic' : 'regular';
-          const issueMsg = `Bold / Italic formatting difference: found ${foundStyle} "${groupFoundWords.join(' ')}", expected ${expStyle} text`;
-          issues.push(issueMsg);
-          wordErrors.push({
-            word: groupFoundWords.join(' '),
-            clean: groupFoundWords.join(' ').replace(/^[.,;:!?'"–—\-()\[\]]+|[.,;:!?'"–—\-()\[\]]+$/g, ''),
-            expected: groupExpectedWords.join(' '),
-            issue: issueMsg,
-            type: 'formatting',
-            bStartIdx: bIdx,
-            bEndIdx: nextB,
-          });
-
-          bIdx = nextB;
-          tokenCursor = nextC;
-          continue;
-        }
-
-        // Capitalization / Punctuation check
-        if (bt.raw !== ct.raw) {
-          if (bIdx === 0 && (bt.raw === '•' || bt.raw === '-' || bt.raw === '*')) {
-            // Bullet matches
-          } else if (bt.raw.toLowerCase() === ct.raw.toLowerCase()) {
-            const issueMsg = `Capitalization difference: found "${bt.raw}", expected "${ct.raw}"`;
-            issues.push(issueMsg);
-            wordErrors.push({
-              word: bt.raw,
-              clean: bt.clean,
-              expected: ct.raw,
-              issue: issueMsg,
-              type: 'capitalization',
-              bStartIdx: bIdx,
-              bEndIdx: bIdx + 1,
-            });
-          } else if (bt.clean.toLowerCase() === ct.clean.toLowerCase()) {
-            if (ct.raw.endsWith('.') && !bt.raw.endsWith('.')) {
-              const issueMsg = `Punctuation difference: missing period "." at end of line`;
-              issues.push(issueMsg);
-              wordErrors.push({
-                word: bt.raw,
-                clean: bt.clean,
-                expected: ct.raw,
-                issue: issueMsg,
-                type: 'punctuation_missing',
-                bStartIdx: bIdx,
-                bEndIdx: bIdx + 1,
-              });
-            } else {
-              const issueMsg = `Punctuation difference: found "${bt.raw}", expected "${ct.raw}"`;
-              issues.push(issueMsg);
-              wordErrors.push({
-                word: bt.raw,
-                clean: bt.clean,
-                expected: ct.raw,
-                issue: issueMsg,
-                type: 'punctuation',
-                bStartIdx: bIdx,
-                bEndIdx: bIdx + 1,
-              });
-            }
-          }
-        }
-
+      // 1. Exact or clean word match (Ignore color, bold, italic, font size, minor punctuation/case)
+      if (normA === normB || (cleanA && cleanA === cleanB)) {
         bIdx++;
         tokenCursor++;
         continue;
       }
 
-      // 2. Extra space inside a word: e.g. "gastro intestinal" vs "gastrointestinal"
-      if (bIdx + 1 < bTokens.length) {
-        const mergedTwo = bt.norm + bTokens[bIdx + 1].norm;
-        if (mergedTwo === ct.norm) {
-          const issueMsg = `Spacing difference: found extra space in "${bt.raw} ${bTokens[bIdx + 1].raw}", expected "${ct.raw}"`;
-          issues.push(issueMsg);
-          wordErrors.push({
-            word: `${bt.raw} ${bTokens[bIdx + 1].raw}`,
-            clean: `${bt.clean} ${bTokens[bIdx + 1].clean}`,
-            expected: ct.raw,
-            issue: issueMsg,
-            type: 'spacing',
-            bStartIdx: bIdx,
-            bEndIdx: bIdx + 2,
-          });
-          bIdx += 2;
-          tokenCursor++;
-          continue;
-        }
+      // Check if space merged words: e.g. "pre-exposure" vs "pre" + "exposure" or "gastro intestinal" vs "gastrointestinal"
+      if (bIdx + 1 < bTokens.length && bt.norm + bTokens[bIdx + 1].norm === ct.norm) {
+        bIdx += 2;
+        tokenCursor++;
+        continue;
+      }
+      if (tokenCursor + 1 < canonicalTokens.length && ct.norm + canonicalTokens[tokenCursor + 1].norm === bt.norm) {
+        bIdx++;
+        tokenCursor += 2;
+        continue;
       }
 
-      // 3. Missing space between words: e.g. "training-layout" vs "training-" + "layout"
-      if (tokenCursor + 1 < canonicalTokens.length) {
-        const mergedA = ct.norm + canonicalTokens[tokenCursor + 1].norm;
-        if (bt.norm === mergedA || bt.norm.replace(/[-–—]/g, '') === mergedA.replace(/[-–—]/g, '')) {
-          const issueMsg = `Spacing difference: missing space in "${bt.raw}", expected "${ct.raw} ${canonicalTokens[tokenCursor + 1].raw}"`;
-          issues.push(issueMsg);
-          wordErrors.push({
-            word: bt.raw,
-            clean: bt.clean,
-            expected: `${ct.raw} ${canonicalTokens[tokenCursor + 1].raw}`,
-            issue: issueMsg,
-            type: 'spacing',
-            bStartIdx: bIdx,
-            bEndIdx: bIdx + 1,
-          });
-          bIdx++;
-          tokenCursor += 2;
-          continue;
-        }
+      // 2. Number mismatch check (critical check: numbers like 30 vs 35 must ALWAYS be flagged)
+      const isNumA = /^\d+(?:\.\d+)?$/.test(ct.raw.replace(/[^\d.]/g, ''));
+      const isNumB = /^\d+(?:\.\d+)?$/.test(bt.raw.replace(/[^\d.]/g, ''));
+      if (isNumA && isNumB && normA !== normB) {
+        const issueMsg = `Number mismatch: found "${bt.raw}", expected "${ct.raw}"`;
+        issues.push(issueMsg);
+        wordErrors.push({
+          word: bt.raw,
+          clean: bt.clean,
+          expected: ct.raw,
+          issue: issueMsg,
+          type: 'spelling',
+          bStartIdx: bIdx,
+          bEndIdx: bIdx + 1,
+        });
+        bIdx++;
+        tokenCursor++;
+        continue;
       }
 
-      // 4. Spelling typo check (Levenshtein edit distance <= 2)
-      if (ct.norm && bt.norm && levenshteinDist(ct.norm, bt.norm) <= 2) {
+      // 3. Spelling typo check (Levenshtein edit distance <= 2 or <= 3 for long words)
+      const maxDist = Math.min(normA.length, normB.length) > 5 ? 3 : 2;
+      if (normA && normB && levenshteinDist(normA, normB) <= maxDist) {
         const issueMsg = `Spelling mistake: found "${bt.raw}", expected "${ct.raw}"`;
         issues.push(issueMsg);
         wordErrors.push({
@@ -1819,17 +1720,20 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         continue;
       }
 
-      // 5. Missing word in B
+      // 4. Missing word in B
       let foundAhead = -1;
       for (let look = 1; look <= 4; look++) {
-        if (tokenCursor + look < canonicalTokens.length && canonicalTokens[tokenCursor + look].norm === bt.norm) {
+        if (tokenCursor + look < canonicalTokens.length && canonicalTokens[tokenCursor + look].norm === normB) {
           foundAhead = look;
           break;
         }
       }
 
       if (foundAhead > 0) {
-        const omitted = canonicalTokens.slice(tokenCursor, tokenCursor + foundAhead).map((t) => t.raw).join(' ');
+        const omitted = canonicalTokens
+          .slice(tokenCursor, tokenCursor + foundAhead)
+          .map((t) => t.raw)
+          .join(' ');
         const issueMsg = `Missing word: "${omitted}"`;
         issues.push(issueMsg);
         wordErrors.push({
@@ -1845,16 +1749,19 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         continue;
       }
 
-      // 6. Extra word in B
+      // 5. Extra word in B
       let foundAheadB = -1;
       for (let lookB = 1; lookB <= 4; lookB++) {
-        if (bIdx + lookB < bTokens.length && bTokens[bIdx + lookB].norm === ct.norm) {
+        if (bIdx + lookB < bTokens.length && bTokens[bIdx + lookB].norm === normA) {
           foundAheadB = lookB;
           break;
         }
       }
       if (foundAheadB > 0) {
-        const extra = bTokens.slice(bIdx, bIdx + foundAheadB).map((t) => t.raw).join(' ');
+        const extra = bTokens
+          .slice(bIdx, bIdx + foundAheadB)
+          .map((t) => t.raw)
+          .join(' ');
         const issueMsg = `Extra word: "${extra}"`;
         issues.push(issueMsg);
         wordErrors.push({
@@ -1870,7 +1777,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         continue;
       }
 
-      // 7. Changed word
+      // 6. Changed word
       const issueMsg = `Changed word: found "${bt.raw}", expected "${ct.raw}"`;
       issues.push(issueMsg);
       wordErrors.push({
