@@ -103,31 +103,34 @@ function computePageHighlights(
   });
 
   // ── STRICT ISI LINE-BY-LINE VISUAL HIGHLIGHTING (Slide B Target Document) ──
-  if (isIsiComparison && Array.isArray(isiLineResults) && isiLineResults.length > 0) {
-    // 1. Group rendered PDF text items into distinct visual lines by baseline rawY.
-    // CRITICAL: Separate items if there is a column gap (> 35px) to prevent multi-column merging (e.g. sidebar annotations)!
+  if ((isIsiComparison || (Array.isArray(isiLineResults) && isiLineResults.length > 0)) && itemBoxes.length > 0) {
+    // 1. Group rendered PDF text items into distinct visual lines by canvas screen Y coordinates (top-to-bottom)
     const sortedItems = [...itemBoxes]
       .filter((it) => it.cleanStr)
       .sort((a, b) => {
-        if (Math.abs(a.rawY - b.rawY) <= 4) {
+        if (Math.abs(a.y - b.y) <= 4) {
           return a.x - b.x;
         }
-        return b.rawY - a.rawY; // Top of page first
+        return a.y - b.y; // Top of canvas (y=0) to bottom
       });
 
     const lineSegments = [];
     let curSegment = [];
     let curY = null;
+    let curH = 12;
+
     for (const it of sortedItems) {
-      if (curY === null || Math.abs(it.rawY - curY) > 4) {
+      const lineThreshold = Math.max(4, Math.min(10, (it.h || curH) * 0.65));
+      if (curY === null || Math.abs(it.y - curY) > lineThreshold) {
         if (curSegment.length > 0) lineSegments.push(curSegment);
         curSegment = [it];
-        curY = it.rawY;
+        curY = it.y;
+        curH = it.h;
       } else {
         const prev = curSegment[curSegment.length - 1];
         const gap = it.x - (prev.x + prev.w);
-        if (gap > 35) {
-          // Large column gap: start a new segment on the same baseline!
+        if (gap > 75) {
+          // Significant column gap (>75px): start a new segment on the same baseline!
           lineSegments.push(curSegment);
           curSegment = [it];
         } else {
@@ -146,6 +149,7 @@ function computePageHighlights(
       const maxY = Math.max(...sorted.map((m) => m.y + m.h));
       return {
         rawY: lineItems[0].rawY,
+        y: minY,
         text,
         clean: text.toLowerCase().replace(/[^a-z0-9]/g, ''),
         lineItems: sorted,
@@ -158,301 +162,241 @@ function computePageHighlights(
       };
     });
 
+    const COMPOSITE_NON_ISI_LINE_REGEX =
+      /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
+
     const highlights = [];
-    const usedIndices = new Set();
 
-    for (const lr of isiLineResults) {
-      const lrClean = (lr.text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (!lrClean && lr.text !== '•' && lr.text !== '-' && lr.text !== '*') continue;
+    for (let pIdx = 0; pIdx < pageLines.length; pIdx++) {
+      const pl = pageLines[pIdx];
+      const plClean = pl.clean;
+      if (!plClean && pl.text !== '•' && pl.text !== '-' && pl.text !== '*') continue;
 
-      let bestIdx = -1;
+      // 1. Strict skip for non-ISI marketing lines
+      if (COMPOSITE_NON_ISI_LINE_REGEX.test(pl.text) || COMPOSITE_NON_ISI_LINE_REGEX.test(plClean)) {
+        continue;
+      }
+
+      // 2. Find best matching ISI line result
+      let matchedLr = null;
       let bestScore = 0;
-      let matchedLine = null;
 
-      for (let pIdx = 0; pIdx < pageLines.length; pIdx++) {
-        if (usedIndices.has(pIdx)) continue;
-        const pl = pageLines[pIdx];
+      for (let lIdx = 0; lIdx < isiLineResults.length; lIdx++) {
+        const lr = isiLineResults[lIdx];
+        const lrClean = (lr.text || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!lrClean && lr.text !== '•' && lr.text !== '-' && lr.text !== '*') continue;
 
-        if (pl.clean === lrClean) {
-          bestIdx = pIdx;
-          bestScore = 1;
+        // Case A: Exact clean text match
+        if (lrClean === plClean) {
+          matchedLr = lr;
+          bestScore = 1.0;
           break;
         }
 
-        const minLen = Math.min(pl.clean.length, lrClean.length);
-        const maxLen = Math.max(pl.clean.length, lrClean.length);
-        const lenRatio = maxLen > 0 ? minLen / maxLen : 0;
-
-        if (
-          ((pl.clean.includes(lrClean) || lrClean.includes(pl.clean)) && lenRatio >= 0.5) ||
-          (lrClean.length < 4 && (pl.text === lr.text || pl.clean === lrClean))
-        ) {
-          if (lenRatio > bestScore) {
-            bestScore = lenRatio;
-            bestIdx = pIdx;
+        // Case B: Visual line is wrapped substring of longer statement/line
+        if (lrClean.includes(plClean) && plClean.length >= 6) {
+          const score = plClean.length / lrClean.length;
+          if (score > bestScore) {
+            bestScore = score;
+            matchedLr = lr;
+          }
+        }
+        // Case C: Statement is substring of visual line
+        else if (plClean.includes(lrClean) && lrClean.length >= 6) {
+          const score = lrClean.length / plClean.length;
+          if (score > bestScore) {
+            bestScore = score;
+            matchedLr = lr;
+          }
+        }
+        // Case D: High word overlap (sequence matching)
+        else if (plClean.length >= 10 && lrClean.length >= 10) {
+          const plWords = pl.text.toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter((w) => w.length >= 3);
+          const lrWords = (lr.text || '').toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter((w) => w.length >= 3);
+          if (plWords.length > 0 && lrWords.length > 0) {
+            let overlap = 0;
+            for (const pw of plWords) {
+              if (lrWords.includes(pw)) overlap++;
+            }
+            const ratio = overlap / plWords.length;
+            if (ratio >= 0.65 && ratio > bestScore) {
+              bestScore = ratio;
+              matchedLr = lr;
+            }
           }
         }
       }
 
-      if (bestIdx >= 0) {
-        matchedLine = pageLines[bestIdx];
-        usedIndices.add(bestIdx);
-      }
+      if (matchedLr) {
+        const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
+        const safeLineBox = { ...pl.box, h: safeLineH };
 
-      let lineBox = matchedLine ? matchedLine.box : null;
+        const isMatch = matchedLr.color === 'green' && (!matchedLr.wordErrors || matchedLr.wordErrors.length === 0);
+        const hasWordErrors = Array.isArray(matchedLr.wordErrors) && matchedLr.wordErrors.length > 0;
+        const isLineMatch = matchedLr.color === 'green';
 
-      // Fallback: search itemBoxes directly if matchedLine is null
-      if (!lineBox && lrClean) {
-        const words = lr.text.trim().split(/\s+/).filter(Boolean);
-        if (words.length > 0) {
-          const firstW = words[0].toLowerCase().replace(/[^a-z0-9]/g, '');
-          for (let i = 0; i < itemBoxes.length; i++) {
-            const itClean = itemBoxes[i].cleanStr.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (firstW && (itClean === firstW || itClean.includes(firstW))) {
-              let combined = '';
-              const span = [];
-              for (let j = i; j < Math.min(itemBoxes.length, i + words.length + 4); j++) {
-                span.push(itemBoxes[j]);
-                combined += itemBoxes[j].cleanStr.toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (combined.includes(lrClean) || lrClean.includes(combined)) {
-                  const minX = Math.min(...span.map((m) => m.x));
-                  const minY = Math.min(...span.map((m) => m.y));
-                  const maxX = Math.max(...span.map((m) => m.x + m.w));
-                  const maxY = Math.max(...span.map((m) => m.y + m.h));
-                  lineBox = {
-                    x: Math.round(minX - 1),
-                    y: Math.round(minY),
-                    w: Math.round(maxX - minX + 2),
-                    h: Math.round(maxY - minY),
+        // Base line highlight:
+        // - Complete match -> clean GREEN box (User Requirement: "macth kp green")
+        // - Mismatches / extra lines -> RED box (User Requirement: "mismatch hop to red")
+        // - Lines with word errors -> subtle GREEN base line with localized RED word errors
+        if (isMatch) {
+          highlights.push({
+            id: `isi_line_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
+            index: matchedLr.lineNum || matchedLr.lineIndex || pIdx,
+            target: pl.text,
+            box: safeLineBox,
+            boxes: [safeLineBox],
+            isMatch: true,
+            isError: false,
+            color: 'green',
+            category: 'Complete Line Match',
+            details: '✓ Verified Line Match',
+            comment: matchedLr.comment || '✓ Verified Line Match',
+            expected: matchedLr.expected || pl.text,
+            found: pl.text,
+          });
+        } else if (!isLineMatch) {
+          highlights.push({
+            id: `isi_line_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
+            index: matchedLr.lineNum || matchedLr.lineIndex || pIdx,
+            target: pl.text,
+            box: safeLineBox,
+            boxes: [safeLineBox],
+            isMatch: false,
+            isError: true,
+            color: 'red',
+            category: matchedLr.status === 'extra_line' ? 'Extra Line' : 'Line Discrepancy',
+            details: matchedLr.comment || 'Discrepancy in line',
+            comment: matchedLr.comment || 'Discrepancy in line',
+            expected: matchedLr.expected || pl.text,
+            found: pl.text,
+            isLineDiscrepancy: true,
+            isMissingLine: matchedLr.status === 'missing_line',
+          });
+        } else if (hasWordErrors) {
+          highlights.push({
+            id: `isi_line_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
+            index: matchedLr.lineNum || matchedLr.lineIndex || pIdx,
+            target: pl.text,
+            box: safeLineBox,
+            boxes: [safeLineBox],
+            isMatch: true,
+            isError: false,
+            color: 'green',
+            category: 'Verified Line with Discrepancy',
+            details: 'Line matched sequence with localized word discrepancy',
+            comment: matchedLr.comment,
+            expected: matchedLr.expected || pl.text,
+            found: pl.text,
+          });
+        }
+
+        // Word error localized highlights inside this visual line
+        if (hasWordErrors) {
+          matchedLr.wordErrors.forEach((we, wIdx) => {
+            const weWord = (we.word || '').trim();
+            if (!weWord) return;
+
+            let wordBox = null;
+            const cleanWeWord = weWord.toLowerCase().replace(/[^\w]/g, '');
+
+            if (pl.lineItems && pl.lineItems.length > 0) {
+              for (const item of pl.lineItems) {
+                const itemStr = (item.str || '').trim();
+                const cleanItemStr = itemStr.toLowerCase().replace(/[^\w]/g, '');
+
+                if (itemStr.toLowerCase() === weWord.toLowerCase() || (cleanWeWord && cleanItemStr === cleanWeWord)) {
+                  wordBox = {
+                    x: Math.round(item.x - 1),
+                    y: Math.round(item.y - 1),
+                    w: Math.max(14, Math.round(item.w + 2)),
+                    h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
+                  };
+                  break;
+                }
+
+                const idxInItem = itemStr.toLowerCase().indexOf(weWord.toLowerCase());
+                if (idxInItem >= 0) {
+                  const charW = item.w / (itemStr.length || 1);
+                  wordBox = {
+                    x: Math.round(item.x + idxInItem * charW - 1),
+                    y: Math.round(item.y - 1),
+                    w: Math.max(14, Math.round(weWord.length * charW + 2)),
+                    h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
                   };
                   break;
                 }
               }
-              if (lineBox) break;
             }
-          }
-        }
-      }
 
-      // If text not found on this page and lr specifies another page, skip
-      if (!lineBox && lr.page && safePageNum && lr.page !== safePageNum) continue;
-      if (!lineBox) continue;
-
-      // Clamp lineBox height to normal single-line height
-      const safeLineH = Math.min(Math.max(lineBox.h, 12), 34);
-      const safeLineBox = {
-        ...lineBox,
-        h: safeLineH,
-      };
-
-      const isMatch = lr.color === 'green' && (!lr.wordErrors || lr.wordErrors.length === 0);
-      const hasWordErrors = Array.isArray(lr.wordErrors) && lr.wordErrors.length > 0;
-      const isLineMatch = lr.color === 'green';
-
-      // 1. Line Highlights:
-      // - Correct matches -> clean GREEN box (User Requirement: "macth kp green")
-      // - Mismatches / extra lines -> RED box with explanatory comment (User Requirement: "mismatch hop to red")
-      // - Lines with word errors -> base line in GREEN with specific word errors in RED
-      if (isMatch) {
-        highlights.push({
-          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
-          index: lr.lineNum || lr.lineIndex,
-          target: lr.text,
-          box: safeLineBox,
-          boxes: [safeLineBox],
-          isMatch: true,
-          isError: false,
-          color: 'green',
-          category: 'Complete Line Match',
-          details: '✓ Verified Line Match',
-          comment: lr.comment || '✓ Verified Line Match',
-          expected: lr.expected || lr.text,
-          found: lr.found || lr.text,
-        });
-      } else if (!isLineMatch) {
-        highlights.push({
-          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
-          index: lr.lineNum || lr.lineIndex,
-          target: lr.text,
-          box: safeLineBox,
-          boxes: [safeLineBox],
-          isMatch: false,
-          isError: true,
-          color: 'red',
-          category: lr.status === 'extra_line' ? 'Extra Line' : 'Line Discrepancy',
-          details: lr.comment || 'Discrepancy in line',
-          comment: lr.comment || 'Discrepancy in line',
-          expected: lr.expected || lr.text,
-          found: lr.found || lr.text,
-          isLineDiscrepancy: true,
-          isMissingLine: lr.status === 'missing_line' || (lr.comment || '').includes('Missing line'),
-        });
-      } else if (hasWordErrors) {
-        highlights.push({
-          id: `isi_line_${lr.lineNum || lr.lineIndex}`,
-          index: lr.lineNum || lr.lineIndex,
-          target: lr.text,
-          box: safeLineBox,
-          boxes: [safeLineBox],
-          isMatch: true,
-          isError: false,
-          color: 'green',
-          category: 'Verified Line with Discrepancy',
-          details: 'Line matched sequence with localized word discrepancy',
-          comment: lr.comment,
-          expected: lr.expected || lr.text,
-          found: lr.found || lr.text,
-        });
-      }
-
-      // 2. Word-Level Red Highlights (User Requirement: "any error mark red")
-      if (hasWordErrors) {
-        lr.wordErrors.forEach((we, wIdx) => {
-          const weWord = (we.word || '').trim();
-          if (!weWord) return;
-
-          let wordBox = null;
-          const cleanWeWord = weWord.toLowerCase().replace(/[^\w]/g, '');
-
-          // Find matching item on the line if vector text exists
-          if (matchedLine?.lineItems) {
-            for (const item of matchedLine.lineItems) {
-              const itemStr = (item.str || '').trim();
-              const cleanItemStr = itemStr.toLowerCase().replace(/[^\w]/g, '');
-
-              // Case A: Exact or normalized token match
-              if (itemStr.toLowerCase() === weWord.toLowerCase() || (cleanWeWord && cleanItemStr === cleanWeWord)) {
+            if (!wordBox) {
+              const idxInLine = pl.text.toLowerCase().indexOf(weWord.toLowerCase());
+              if (idxInLine >= 0) {
+                const charW = safeLineBox.w / (pl.text.length || 1);
                 wordBox = {
-                  x: Math.round(item.x - 1),
-                  y: Math.round(item.y - 1),
-                  w: Math.max(14, Math.round(item.w + 2)),
-                  h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
-                };
-                break;
-              }
-
-              // Case B: Substring within token
-              const idxInItem = itemStr.toLowerCase().indexOf(weWord.toLowerCase());
-              if (idxInItem >= 0) {
-                const charW = item.w / (itemStr.length || 1);
-                wordBox = {
-                  x: Math.round(item.x + idxInItem * charW - 1),
-                  y: Math.round(item.y - 1),
+                  x: Math.round(safeLineBox.x + idxInLine * charW - 1),
+                  y: Math.round(safeLineBox.y - 1),
                   w: Math.max(14, Math.round(weWord.length * charW + 2)),
-                  h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
+                  h: safeLineH,
                 };
-                break;
               }
             }
 
-            // Case B2: Multi-item span match
-            if (!wordBox && matchedLine.lineItems.length > 1) {
-              const weWords = weWord.toLowerCase().split(/\s+/).filter(Boolean);
-              if (weWords.length >= 2) {
-                const firstW = weWords[0].replace(/[^\w]/g, '');
-                for (let si = 0; si < matchedLine.lineItems.length; si++) {
-                  const sClean = (matchedLine.lineItems[si].str || '').toLowerCase().replace(/[^\w]/g, '');
-                  if (sClean === firstW || sClean.includes(firstW)) {
-                    let accumulated = '';
-                    const spanItems = [];
-                    for (let sj = si; sj < Math.min(matchedLine.lineItems.length, si + weWords.length + 1); sj++) {
-                      spanItems.push(matchedLine.lineItems[sj]);
-                      accumulated += (accumulated ? ' ' : '') + (matchedLine.lineItems[sj].str || '').trim().toLowerCase();
-                      const accClean = accumulated.replace(/[^\w]/g, '');
-                      if (accClean.includes(cleanWeWord)) {
-                        const minX = Math.min(...spanItems.map((m) => m.x));
-                        const minY = Math.min(...spanItems.map((m) => m.y));
-                        const maxX = Math.max(...spanItems.map((m) => m.x + m.w));
-                        const maxY = Math.max(...spanItems.map((m) => m.y + m.h));
-                        wordBox = {
-                          x: Math.round(minX - 1),
-                          y: Math.round(minY - 1),
-                          w: Math.max(14, Math.round(maxX - minX + 2)),
-                          h: Math.min(32, Math.max(12, Math.round(maxY - minY + 2))),
-                        };
-                        break;
-                      }
-                    }
-                    if (wordBox) break;
-                  }
-                }
-              }
-            }
-          }
+            if (wordBox) {
+              const errCategory =
+                we.type === 'spelling'
+                  ? 'Spelling Mistake'
+                  : we.type === 'spacing'
+                  ? 'Spacing Difference'
+                  : we.type === 'formatting'
+                  ? 'Bold / Italic Formatting'
+                  : we.type === 'color' || we.type === 'color_mismatch'
+                  ? 'Color Mismatch'
+                  : we.type === 'capitalization'
+                  ? 'Capitalization Difference'
+                  : we.type === 'punctuation_missing' || we.type === 'punctuation'
+                  ? 'Punctuation Difference'
+                  : 'Word Discrepancy';
 
-          // Case B3: Word error matches full line text
-          if (!wordBox && cleanWeWord === (matchedLine ? matchedLine.clean : lrClean)) {
-            wordBox = { ...safeLineBox };
-          }
-
-          // Fallback: estimate proportional position across the safeLineBox
-          if (!wordBox) {
-            const lineText = lr.text || (matchedLine ? matchedLine.text : '') || '';
-            const idxInLine = lineText.toLowerCase().indexOf(weWord.toLowerCase());
-            if (idxInLine >= 0) {
-              const charW = safeLineBox.w / (lineText.length || 1);
-              wordBox = {
-                x: Math.round(safeLineBox.x + idxInLine * charW - 1),
-                y: Math.round(safeLineBox.y - 1),
-                w: Math.max(14, Math.round(weWord.length * charW + 2)),
-                h: safeLineH,
-              };
-            } else {
-              wordBox = { ...safeLineBox };
-            }
-          }
-
-          if (wordBox) {
-            const errCategory =
-              we.type === 'spelling'
-                ? 'Spelling Mistake'
-                : we.type === 'spacing'
-                ? 'Spacing Difference'
-                : we.type === 'formatting'
-                ? 'Bold / Italic Formatting'
-                : we.type === 'color' || we.type === 'color_mismatch'
-                ? 'Color Mismatch'
-                : we.type === 'capitalization'
-                ? 'Capitalization Difference'
-                : we.type === 'punctuation_missing' || we.type === 'punctuation'
-                ? 'Punctuation Difference'
-                : 'Word Discrepancy';
-
-            highlights.push({
-              id: `word_err_${lr.lineNum || lr.lineIndex}_${wIdx}`,
-              index: lr.lineNum || lr.lineIndex,
-              target: weWord,
-              box: wordBox,
-              boxes: [wordBox],
-              isMatch: false,
-              isError: true,
-              color: 'red',
-              isWordDiscrepancy: true,
-              category: errCategory,
-              details: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
-              comment: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
-              expected: we.expected || '(correct text)',
-              found: weWord,
-              discrepancy: {
-                id: `word_err_${lr.lineNum || lr.lineIndex}_${wIdx}`,
+              highlights.push({
+                id: `word_err_${pIdx}_${wIdx}`,
+                index: pIdx,
+                target: weWord,
+                box: wordBox,
+                boxes: [wordBox],
+                isMatch: false,
+                isError: true,
+                color: 'red',
+                isWordDiscrepancy: true,
                 category: errCategory,
-                type: we.type || 'word_mismatch',
-                severity: 'high',
-                expected: we.expected,
+                details: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
+                comment: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
+                expected: we.expected || '(correct text)',
                 found: weWord,
-                details: we.issue,
-              },
-            });
-          }
-        });
+                discrepancy: {
+                  id: `word_err_${pIdx}_${wIdx}`,
+                  category: errCategory,
+                  type: we.type || 'word_mismatch',
+                  severity: 'high',
+                  expected: we.expected,
+                  found: weWord,
+                  details: we.issue,
+                },
+              });
+            }
+          });
+        }
       }
     }
 
-    return highlights;
+    if (highlights.length > 0) {
+      return highlights;
+    }
   }
 
-  // In ISI comparison mode, strictly return only the ISI lines and word errors (ignore all non-ISI headers, annotations, tables)
-  if (isIsiComparison) {
+  // In ISI comparison mode, if highlights were computed above, return them.
+  // Otherwise if pure ISI comparison with no generic discrepancies, return empty.
+  if (isIsiComparison && (!discrepancies || discrepancies.length === 0)) {
     return [];
   }
 
