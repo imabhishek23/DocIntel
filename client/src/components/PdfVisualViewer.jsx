@@ -130,11 +130,10 @@ function computePageHighlights(
       // User Requirement: Check words/sentences only! Leave color, bold, italic, and formatting alone.
       const realWordErrors = (lr.wordErrors || []).filter(
         (we) =>
-          we.type === 'spelling' ||
+          we.type === 'number' ||
           we.type === 'word_changed' ||
           we.type === 'extra_word' ||
-          we.type === 'missing_word' ||
-          we.type === 'number'
+          we.type === 'missing_word'
       );
       const isMatch = lr.color === 'green' && realWordErrors.length === 0;
       const hasWordErrors = realWordErrors.length > 0;
@@ -179,6 +178,9 @@ function computePageHighlights(
         realWordErrors.forEach((we, wIdx) => {
           const weWord = we.word || we.clean;
           if (!weWord) return;
+          const cleanWe = weWord.toLowerCase().replace(/[^\w]/g, '');
+          const cleanExp = (we.expected || '').toLowerCase().replace(/[^\w]/g, '');
+          if (cleanWe && cleanExp && cleanWe === cleanExp) return;
           const idxInLine = lr.text.toLowerCase().indexOf(weWord.toLowerCase());
           const charW = cssBox.w / (lr.text.length || 1);
           const wordX = idxInLine >= 0 ? Math.round(cssBox.x + idxInLine * charW) : cssBox.x;
@@ -386,11 +388,10 @@ function computePageHighlights(
         // User Requirement: Check words/sentences only! Leave color, bold, italic, and formatting alone.
         const realWordErrors = (matchedLr.wordErrors || []).filter(
           (we) =>
-            we.type === 'spelling' ||
+            we.type === 'number' ||
             we.type === 'word_changed' ||
             we.type === 'extra_word' ||
-            we.type === 'missing_word' ||
-            we.type === 'number'
+            we.type === 'missing_word'
         );
         const hasWordErrors = realWordErrors.length > 0;
         const isMatch = matchedLr.color === 'green' && !hasWordErrors;
@@ -460,11 +461,14 @@ function computePageHighlights(
 
             let wordBox = null;
             const cleanWeWord = weWord.toLowerCase().replace(/[^\w]/g, '');
+            const cleanExpWord = (we.expected || '').toLowerCase().replace(/[^\w]/g, '');
+            if (cleanWeWord && cleanExpWord && cleanWeWord === cleanExpWord) return;
 
             if (pl.lineItems && pl.lineItems.length > 0) {
               for (const item of pl.lineItems) {
                 const itemStr = (item.str || '').trim();
                 const cleanItemStr = itemStr.toLowerCase().replace(/[^\w]/g, '');
+                if (cleanItemStr && cleanExpWord && cleanItemStr === cleanExpWord) return;
 
                 if (itemStr.toLowerCase() === weWord.toLowerCase() || (cleanWeWord && cleanItemStr === cleanWeWord)) {
                   wordBox = {

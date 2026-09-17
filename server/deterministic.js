@@ -1245,13 +1245,12 @@ export function extractIsiLinesFromPdf(textB) {
 
 function computeSubsequenceFuzzyScore(cTokens, cStart, bNorm) {
   if (cStart >= cTokens.length || bNorm.length === 0) return 0;
-  // First token of line B must match at cStart (no offset for the line's starting token)
-  if (!tokensFuzzyMatch(cTokens[cStart].norm, bNorm[0])) {
-    return 0;
+  if (bNorm.length === 1) {
+    return tokensFuzzyMatch(cTokens[cStart].norm, bNorm[0]) ? 1 : 0;
   }
-  let cIdx = cStart + 1;
-  let matches = 1;
-  for (let bIdx = 1; bIdx < bNorm.length; bIdx++) {
+  let cIdx = cStart;
+  let matches = 0;
+  for (let bIdx = 0; bIdx < bNorm.length; bIdx++) {
     const bt = bNorm[bIdx];
     for (let offset = 0; offset <= 2 && cIdx + offset < cTokens.length; offset++) {
       if (tokensFuzzyMatch(cTokens[cIdx + offset].norm, bt)) {
@@ -1267,8 +1266,12 @@ function computeSubsequenceFuzzyScore(cTokens, cStart, bNorm) {
 function tokensFuzzyMatch(cNorm, bNorm) {
   if (!cNorm || !bNorm) return false;
   if (cNorm === bNorm) return true;
-  // Short words (<= 3 characters) must match exactly
-  if (cNorm.length <= 3 || bNorm.length <= 3) return false;
+  // Two-letter words or single letters require exact match
+  if (cNorm.length <= 2 || bNorm.length <= 2) return false;
+  // 3-letter words allow 1 edit distance (e.g. use vs uso)
+  if (cNorm.length === 3 && bNorm.length === 3) {
+    return levenshteinDist(cNorm, bNorm) <= 1;
+  }
   // Prefix/stem match for words >= 5 characters
   if (cNorm.length >= 5 && bNorm.length >= 5) {
     if (cNorm.startsWith(bNorm) || bNorm.startsWith(cNorm)) return true;
@@ -1277,6 +1280,45 @@ function tokensFuzzyMatch(cNorm, bNorm) {
   const maxDist = maxLen >= 8 ? 2 : 1;
   if (levenshteinDist(cNorm, bNorm) <= maxDist) return true;
   return false;
+}
+
+const stopWordsSet = new Set(['to', 'if', 'is', 'the', 'at', 'or', 'of', 'in', 'it', 'on', 'as', 'by', 'an', 'be', 'for']);
+
+function isOcrWordMatch(normA, normB) {
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+  // Negation prefixes
+  const negationPrefixes = ['contra', 'non', 'anti', 'dis'];
+  for (const p of negationPrefixes) {
+    if ((normA.startsWith(p) && !normB.startsWith(p)) || (normB.startsWith(p) && !normA.startsWith(p))) {
+      return false;
+    }
+  }
+  // Stop word OCR slips: e.g. '10'/'o'/'lo'/'0' for 'to', 'ff'/'f' for 'if', 'i'/'ts' for 'is'/'it', 'th'/'ha' for 'the', 'a' for 'at'
+  if (stopWordsSet.has(normA)) {
+    if (normA === 'to' && /^(?:10|0|o|lo|te)$/i.test(normB)) return true;
+    if (normA === 'if' && /^(?:ff|f|ti)$/i.test(normB)) return true;
+    if (normA === 'is' && /^(?:i|ts|s|ia)$/i.test(normB)) return true;
+    if (normA === 'the' && /^(?:th|ha|te|tho)$/i.test(normB)) return true;
+    if (normA === 'at' && /^(?:a|et)$/i.test(normB)) return true;
+    if ((normA === 'or' && normB === 'of') || (normA === 'of' && normB === 'or')) return true;
+    if (levenshteinDist(normA, normB) <= 1) return true;
+  }
+  // If pure numbers and not a known stop word slip, numbers must match
+  if (/^\d+$/.test(normA) || /^\d+$/.test(normB)) return false;
+  if (normA.length <= 2 && normB.length <= 2) return normA === normB;
+  if (normA.length <= 2 || normB.length <= 2) {
+    return normA.includes(normB) || normB.includes(normA);
+  }
+  if (normA.length >= 5 && normB.length >= 5) {
+    if (normA.startsWith(normB) || normB.startsWith(normA)) return true;
+  }
+  const maxLen = Math.max(normA.length, normB.length);
+  const dist = levenshteinDist(normA, normB);
+  const maxAllowedDist = maxLen >= 10 ? 4 : maxLen >= 7 ? 3 : maxLen >= 4 ? 2 : 1;
+  if (dist <= maxAllowedDist) return true;
+  const similarity = (maxLen - dist) / maxLen;
+  return similarity >= 0.55;
 }
 
 function normalizeTokenStr(w) {
@@ -1319,10 +1361,12 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
   for (let lIdx = 0; lIdx < linesA.length; lIdx++) {
     const lObj = linesA[lIdx];
     for (let tIdx = 0; tIdx < lObj.tokens.length; tIdx++) {
+      const tok = lObj.tokens[tIdx];
+      if (tok.isSymbolOnly && !tok.norm) continue;
       canonicalTokens.push({
         refLineIndex: lIdx,
         tokenIndex: tIdx,
-        ...lObj.tokens[tIdx],
+        ...tok,
       });
     }
   }
@@ -1360,8 +1404,9 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     }
     prevPage = linePageNum;
     const cleanLine = typeof lineB === 'string' ? lineB : (lineB.clean || '');
-    const bTokens = lineB.tokens || extractStyledTokensHelper(lineB.raw || cleanLine);
-    const bNorm = bTokens.map((t) => t.norm);
+    const rawTokensB = lineB.tokens || extractStyledTokensHelper(lineB.raw || cleanLine);
+    const bTokens = rawTokensB.filter((t) => !t.isSymbolOnly || t.norm.length > 0);
+    const bNorm = bTokens.map((t) => t.norm).filter((n) => n.length > 0);
 
     // Continuation marker: e.g. "(cont'd)" or "IMPORTANT SAFETY INFORMATION (cont'd)" or "Additional Important Safety Information continued below."
     const nextLineObj = lIdx + 1 < linesB.length ? linesB[lIdx + 1] : null;
@@ -1373,7 +1418,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       /^IMPORTANT SAFETY INFORMATION\s*\(cont['’]?d\)$/i.test(cleanLine) ||
       (/^IMPORTANT SAFETY INFORMATION$/i.test(cleanLine) && isNextContd) ||
       /^Additional\s+Important\s+Safety\s+Information(?:\s+continued\s+b[ea]low)?\.?$/i.test(cleanLine) ||
-      /^(?:Important\s+Safety\s+Information\s+)?continued\s+b[ea]low\.?$/i.test(cleanLine)
+      /^(?:Important\s+Safety\s+Information\s+)?continued\s+b[ea]low\.?$/i.test(cleanLine) ||
+      /^(?:continued\s+b[ea]low\.?|\(?cont['’]?d\)?)$/i.test(cleanLine)
     ) {
       let refMatchedIdx = -1;
       for (let look = cCursor; look < Math.min(cCursor + 10, canonicalTokens.length); look++) {
@@ -1485,7 +1531,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         if (bNorm.length <= 2 && (searchPos - cCursor > 4)) {
           let exactAll = true;
           for (let k = 0; k < bNorm.length; k++) {
-            if (searchPos + k >= canonicalTokens.length || canonicalTokens[searchPos + k].norm !== bNorm[k]) {
+            if (searchPos + k >= canonicalTokens.length || !tokensFuzzyMatch(canonicalTokens[searchPos + k].norm, bNorm[k])) {
               exactAll = false;
               break;
             }
@@ -1530,7 +1576,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         if (bNorm.length <= 2) {
           let exactAll = true;
           for (let k = 0; k < bNorm.length; k++) {
-            if (searchPos + k >= canonicalTokens.length || canonicalTokens[searchPos + k].norm !== bNorm[k]) {
+            if (searchPos + k >= canonicalTokens.length || !tokensFuzzyMatch(canonicalTokens[searchPos + k].norm, bNorm[k])) {
               exactAll = false;
               break;
             }
@@ -1539,7 +1585,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         }
 
         const rawScore = computeSubsequenceFuzzyScore(canonicalTokens, searchPos, subseqNorm);
-        if (rawScore > globalBestScore && rawScore >= 0.5) {
+        if (rawScore > globalBestScore && rawScore >= 0.45) {
           globalBestScore = rawScore;
           globalBestStart = searchPos;
           if (rawScore === 1 && canonicalTokens[searchPos].tokenIndex === 0) break;
@@ -1692,7 +1738,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
           clean: bt.clean,
           expected: ct.raw,
           issue: issueMsg,
-          type: 'spelling',
+          type: 'number',
           bStartIdx: bIdx,
           bEndIdx: bIdx + 1,
         });
@@ -1701,20 +1747,9 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         continue;
       }
 
-      // 3. Spelling typo check (Levenshtein edit distance <= 2 or <= 3 for long words)
-      const maxDist = Math.min(normA.length, normB.length) > 5 ? 3 : 2;
-      if (normA && normB && levenshteinDist(normA, normB) <= maxDist) {
-        const issueMsg = `Spelling mistake: found "${bt.raw}", expected "${ct.raw}"`;
-        issues.push(issueMsg);
-        wordErrors.push({
-          word: bt.raw,
-          clean: bt.clean,
-          expected: ct.raw,
-          issue: issueMsg,
-          type: 'spelling',
-          bStartIdx: bIdx,
-          bEndIdx: bIdx + 1,
-        });
+      // 3. Fuzzy match: minor OCR noise or character differences on valid reference words
+      // User Requirement: Check words/sentences only. If the word matches the reference, do NOT mark red!
+      if (isOcrWordMatch(normA, normB)) {
         bIdx++;
         tokenCursor++;
         continue;
@@ -1723,7 +1758,11 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       // 4. Missing word in B
       let foundAhead = -1;
       for (let look = 1; look <= 4; look++) {
-        if (tokenCursor + look < canonicalTokens.length && canonicalTokens[tokenCursor + look].norm === normB) {
+        if (
+          tokenCursor + look < canonicalTokens.length &&
+          (canonicalTokens[tokenCursor + look].norm === normB ||
+            isOcrWordMatch(canonicalTokens[tokenCursor + look].norm, normB))
+        ) {
           foundAhead = look;
           break;
         }
@@ -1752,7 +1791,11 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       // 5. Extra word in B
       let foundAheadB = -1;
       for (let lookB = 1; lookB <= 4; lookB++) {
-        if (bIdx + lookB < bTokens.length && bTokens[bIdx + lookB].norm === normA) {
+        if (
+          bIdx + lookB < bTokens.length &&
+          (bTokens[bIdx + lookB].norm === normA ||
+            isOcrWordMatch(normA, bTokens[bIdx + lookB].norm))
+        ) {
           foundAheadB = lookB;
           break;
         }
@@ -1822,7 +1865,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       const changedOrExtraCount = wordErrors.filter(
         (we) => we.type === 'word_changed' || we.type === 'extra_word'
       ).length;
-      const isMajorityChanged = bTokens.length >= 3 && (changedOrExtraCount / bTokens.length >= 0.5);
+      const isMajorityChanged = bTokens.length >= 3 && (changedOrExtraCount / bTokens.length >= 0.7);
       const isWholeLineError =
         wordErrors.some(
           (we) => we.clean && we.clean.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '') === cleanLineNoPunct
