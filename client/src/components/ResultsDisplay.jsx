@@ -1584,7 +1584,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                 {/* DUAL SLIDE VIEW: VISUAL PDF (Default) vs REDLINE with Draggable Split Adjuster */}
                 {slideDisplayMode === 'visual' ? (
                   <div
-                    ref={containerRef}
+                    ref={splitContainerRef}
                     className="relative flex flex-col lg:flex-row gap-4 lg:gap-2 items-start justify-start w-full overflow-hidden"
                   >
                     {/* SLIDE A: Approved Master Reference Document (100% Clean Baseline - Untouched) */}
