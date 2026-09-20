@@ -109,7 +109,7 @@ function assembleLineItems(lineItems) {
  * Extracts structured text with font styling and colors from a PDF File in browser
  * in under 100ms, completely avoiding serverless OCR timeouts.
  */
-export async function extractPdfTextInBrowser(file) {
+export async function extractPdfTextInBrowser(file, onProgress = null) {
   if (!file) return '';
   if (file.type !== 'application/pdf' && !file.name?.toLowerCase().endsWith('.pdf')) {
     return '';
@@ -124,6 +124,78 @@ export async function extractPdfTextInBrowser(file) {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
       const items = textContent.items || [];
+
+      // If page has fewer than 35 vector text items, it is an image-based/scanned page or flattened composite
+      if (items.length < 35) {
+        try {
+          if (onProgress) onProgress(`Extracting content from scanned page ${pageNum} of ${pdf.numPages}...`);
+          const origViewport = page.getViewport({ scale: 1.0 });
+          const targetWidth = 1100;
+          let scale = targetWidth / Math.max(origViewport.width, 1);
+          if (origViewport.height * scale > 7500) {
+            scale = 7500 / origViewport.height;
+          }
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(viewport.width);
+          canvas.height = Math.round(viewport.height);
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+
+          const { createWorker } = await import('tesseract.js');
+          const worker = await createWorker('eng', 1);
+          const ret = await worker.recognize(canvas);
+
+          const scaleBackX = origViewport.width / canvas.width;
+          const scaleBackY = origViewport.height / canvas.height;
+          const pageLines = [];
+
+          ret?.data?.lines?.forEach((l) => {
+            const lineText = (l.text || '').trim();
+            if (!lineText) return;
+
+            const x0 = l.bbox.x0 * scaleBackX;
+            const y0 = l.bbox.y0 * scaleBackY;
+            const x1 = l.bbox.x1 * scaleBackX;
+            const y1 = l.bbox.y1 * scaleBackY;
+
+            const pdfX = Math.round(x0);
+            const pdfY = Math.round(origViewport.height - y1);
+            const pdfW = Math.round(x1 - x0);
+            const pdfH = Math.round(y1 - y0);
+
+            // Sample font color from canvas
+            const cx = Math.floor((l.bbox.x0 + l.bbox.x1) / 2);
+            const cy = Math.floor((l.bbox.y0 + l.bbox.y1) / 2);
+            let cat = 'black';
+            let sampled = [0, 0, 0];
+            try {
+              const p = ctx.getImageData(cx, cy, 1, 1).data;
+              sampled = [p[0], p[1], p[2]];
+              cat = getColorCategory(sampled);
+            } catch (_) {}
+
+            let taggedText = lineText;
+            if (cat !== 'black') {
+              taggedText = `<font color="rgb(${sampled.join(',')})" data-cat="${cat}">${lineText}</font>`;
+            }
+            taggedText += ` <!-- BOX:{"x":${pdfX},"y":${pdfY},"w":${pdfW},"h":${pdfH},"page":${pageNum}} -->`;
+            pageLines.push(taggedText);
+          });
+
+          await worker.terminate();
+          canvas.width = 0;
+          canvas.height = 0;
+
+          const pageText = pageLines.join('\n').trim();
+          if (pageText) {
+            fullText += `<!-- PAGE ${pageNum} -->\n` + pageText + '\n\n';
+          }
+          continue;
+        } catch (ocrErr) {
+          console.warn(`[extractPdfTextInBrowser] Page ${pageNum} OCR fallback warning:`, ocrErr);
+        }
+      }
 
       if (items.length === 0) continue;
 

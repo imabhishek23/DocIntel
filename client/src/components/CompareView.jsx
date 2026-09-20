@@ -92,6 +92,7 @@ export default function CompareView({ onOpenQA }) {
   const [currentStage, setCurrentStage] = useState(0);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [customStatus, setCustomStatus] = useState(null);
 
   const stages = [
     'Extracting both documents',
@@ -110,6 +111,7 @@ export default function CompareView({ onOpenQA }) {
     }
 
     setError(null);
+    setCustomStatus(null);
     setIsLoading(true);
     setCurrentStage(0);
 
@@ -133,14 +135,35 @@ export default function CompareView({ onOpenQA }) {
 
       if (isPdfA) {
         try {
-          extractedTextA = await extractPdfTextInBrowser(fileA);
+          extractedTextA = await extractPdfTextInBrowser(fileA, setCustomStatus);
+        } catch (_) {}
+      } else if (isImgA) {
+        try {
+          setCustomStatus('Extracting content from Image A...');
+          const { createWorker } = await import('tesseract.js');
+          const worker = await createWorker('eng', 1);
+          const ret = await worker.recognize(fileA);
+          extractedTextA = ret?.data?.text || '';
+          await worker.terminate();
         } catch (_) {}
       }
+
       if (isPdfB) {
         try {
-          extractedTextB = await extractPdfTextInBrowser(fileB);
+          extractedTextB = await extractPdfTextInBrowser(fileB, setCustomStatus);
+        } catch (_) {}
+      } else if (isImgB) {
+        try {
+          setCustomStatus('Extracting content from Image B...');
+          const { createWorker } = await import('tesseract.js');
+          const worker = await createWorker('eng', 1);
+          const ret = await worker.recognize(fileB);
+          extractedTextB = ret?.data?.text || '';
+          await worker.terminate();
         } catch (_) {}
       }
+
+      setCustomStatus('Optimizing documents for fast upload...');
 
       // Stay strictly under Vercel serverless 4.5MB request payload limit
       const targetPerFileLimit = (fileA && fileB) ? (1.8 * 1024 * 1024) : (3.5 * 1024 * 1024);
@@ -342,7 +365,7 @@ export default function CompareView({ onOpenQA }) {
           <div className="mt-6 rounded-xl border border-indigo-100 bg-indigo-50/50 p-5">
             <div className="flex items-center gap-2 text-sm font-bold text-indigo-900">
               <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
-              <span>Analyzing differences between Document A and Document B...</span>
+              <span>{customStatus || 'Analyzing differences between Document A and Document B...'}</span>
             </div>
             <div className="mt-4 space-y-2">
               {stages.map((stage, idx) => (

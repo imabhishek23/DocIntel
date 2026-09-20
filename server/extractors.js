@@ -203,14 +203,12 @@ function assembleLineItems(lineItems) {
     .trim();
 }
 
-function createBmpBufferDownsampled(origW, origH, rgbData, scale = 2) {
+function createBmpBufferDownsampled(origW, origH, rgbData, scale = 2.5) {
   const newW = Math.floor(origW / scale);
   const newH = Math.floor(origH / scale);
-  const bytesPerPixel = 3;
-  const rowStride = newW * bytesPerPixel;
+  const rowStride = newW * 3;
   const padding = (4 - (rowStride % 4)) % 4;
-  const paddedRowStride = rowStride + padding;
-  const pixelDataSize = paddedRowStride * newH;
+  const pixelDataSize = (rowStride + padding) * newH;
   const fileSize = 54 + pixelDataSize;
 
   const buf = Buffer.alloc(fileSize);
@@ -222,19 +220,14 @@ function createBmpBufferDownsampled(origW, origH, rgbData, scale = 2) {
   buf.writeInt32LE(newH, 22);
   buf.writeUInt16LE(1, 26);
   buf.writeUInt16LE(24, 28);
-  buf.writeUInt32LE(0, 30);
   buf.writeUInt32LE(pixelDataSize, 34);
-  buf.writeInt32LE(2835, 38);
-  buf.writeInt32LE(2835, 42);
 
-  const origRowStride = origW * bytesPerPixel;
+  const origRowStride = origW * 3;
   let offset = 54;
   for (let y = newH - 1; y >= 0; y--) {
-    const srcY = y * scale;
-    const srcOffset = srcY * origRowStride;
+    const srcOffset = Math.floor(y * scale) * origRowStride;
     for (let x = 0; x < newW; x++) {
-      const srcX = x * scale;
-      const pSrc = srcOffset + srcX * 3;
+      const pSrc = srcOffset + Math.floor(x * scale) * 3;
       buf[offset++] = rgbData[pSrc + 2];
       buf[offset++] = rgbData[pSrc + 1];
       buf[offset++] = rgbData[pSrc];
@@ -354,7 +347,7 @@ async function extractPdfText(buffer) {
             const cachePath = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : undefined;
             ocrWorkerInstance = await createWorker('eng', 1, cachePath ? { cachePath } : undefined);
           }
-          const scale = 2;
+          const scale = 2.5;
           const { buf: bmpBuf } = createBmpBufferDownsampled(largeImgObj.width, largeImgObj.height, largeImgObj.data, scale);
           const ocrPromise = ocrWorkerInstance.recognize(bmpBuf, {}, { text: true, blocks: true });
           const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timeout on serverless')), 7000));
