@@ -165,10 +165,10 @@ export default function CompareView({ onOpenQA }) {
 
       const data = await compareDocuments({
         fileA: uploadFileA,
-        textA: fileA ? null : (extractedTextA || textA),
+        textA: (extractedTextA && extractedTextA.trim().length > 0) ? extractedTextA : (textA || null),
         nameA: fileA ? fileA.name : (textA.includes('Vandaprex') ? 'Approved Word Master' : 'Original Draft (A)'),
         fileB: uploadFileB,
-        textB: fileB ? null : (extractedTextB || textB),
+        textB: (extractedTextB && extractedTextB.trim().length > 0) ? extractedTextB : (textB || null),
         nameB: fileB ? fileB.name : (textB.includes('Vandaprex') ? 'Promotional PDF Target' : 'Revised Draft (B)'),
       });
 

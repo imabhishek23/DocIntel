@@ -4,6 +4,7 @@ import ResultsDisplay from './ResultsDisplay';
 import ErrorBoundary from './ErrorBoundary';
 import { analyzeDocument } from '../api';
 import { compressPdfIfNeeded, compressImageIfNeeded } from '../utils/pdfCompressor';
+import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
 import { Sparkles, Loader2, AlertCircle, FileCode } from 'lucide-react';
 
 const SAMPLE_CONTRACT = `MASTER SERVICES AGREEMENT
@@ -60,6 +61,13 @@ export default function AnalyzeView({ onOpenQA }) {
       const isImg = file && (file.type?.startsWith('image/') || /\.(png|jpe?g|webp|bmp)$/i.test(file.name));
       const pdfUrl = isPdf ? URL.createObjectURL(file) : null;
 
+      let extractedText = null;
+      if (isPdf) {
+        try {
+          extractedText = await extractPdfTextInBrowser(file);
+        } catch (_) {}
+      }
+
       let uploadFile = file;
       if (file) {
         if (isPdf) {
@@ -71,7 +79,7 @@ export default function AnalyzeView({ onOpenQA }) {
 
       const data = await analyzeDocument({
         file: uploadFile,
-        text: file ? null : text,
+        text: (extractedText && extractedText.trim().length > 0) ? extractedText : (text || null),
         title: file ? file.name : 'Analyzed Agreement',
       });
       setResult({

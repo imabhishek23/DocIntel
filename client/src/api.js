@@ -20,10 +20,14 @@ export async function analyzeDocument({ file, text, title }) {
   const formData = new FormData();
   if (file) {
     formData.append('file', file);
-  } else if (text) {
+  }
+  if (text) {
     formData.append('text', text);
-    if (title) formData.append('title', title);
-  } else {
+  }
+  if (title) {
+    formData.append('title', title);
+  }
+  if (!file && !text) {
     throw new Error('Please select a file or paste document text.');
   }
 
@@ -34,6 +38,9 @@ export async function analyzeDocument({ file, text, title }) {
 
   if (res.status === 413) {
     throw new Error('Upload payload too large for serverless limit (max ~4.5MB). The document has been automatically optimized, but please try using fewer pages or a lower-resolution file.');
+  }
+  if (res.status === 504) {
+    throw new Error('The serverless function timed out (504). Please try again with fewer pages.');
   }
 
   let data;
@@ -75,6 +82,9 @@ export async function compareDocuments({ fileA, textA, nameA, fileB, textB, name
 
   if (res.status === 413) {
     throw new Error('Upload payload too large for serverless limit (max ~4.5MB). The documents were automatically compressed, but please try using fewer pages or lower-resolution files.');
+  }
+  if (res.status === 504) {
+    throw new Error('The serverless function timed out (504). Please try again with shorter documents.');
   }
 
   let data;

@@ -349,54 +349,60 @@ async function extractPdfText(buffer) {
       // Check if page is image-based or scanned (fewer than 50 vector text items but has large image)
       if ((!items || items.length < 50) && largeImgObj) {
         console.log(`[PDF] Page ${pageNum} is image-based (${largeImgObj.width}x${largeImgObj.height}, vector items=${items ? items.length : 0}). Running OCR...`);
-        if (!ocrWorkerInstance) {
-          const cachePath = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : undefined;
-          ocrWorkerInstance = await createWorker('eng', 1, cachePath ? { cachePath } : undefined);
-        }
-        const scale = 2;
-        const { buf: bmpBuf } = createBmpBufferDownsampled(largeImgObj.width, largeImgObj.height, largeImgObj.data, scale);
-        const ret = await ocrWorkerInstance.recognize(bmpBuf, {}, { text: true, blocks: true });
+        try {
+          if (!ocrWorkerInstance) {
+            const cachePath = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME ? '/tmp' : undefined;
+            ocrWorkerInstance = await createWorker('eng', 1, cachePath ? { cachePath } : undefined);
+          }
+          const scale = 2;
+          const { buf: bmpBuf } = createBmpBufferDownsampled(largeImgObj.width, largeImgObj.height, largeImgObj.data, scale);
+          const ocrPromise = ocrWorkerInstance.recognize(bmpBuf, {}, { text: true, blocks: true });
+          const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timeout on serverless')), 7000));
+          const ret = await Promise.race([ocrPromise, timeoutPromise]);
 
-        const scaleX = imgTransform ? imgTransform[0] : page.view[2];
-        const scaleY = imgTransform ? imgTransform[3] : page.view[3];
-        const transX = imgTransform ? imgTransform[4] : 0;
-        const transY = imgTransform ? imgTransform[5] : 0;
+          const scaleX = imgTransform ? imgTransform[0] : page.view[2];
+          const scaleY = imgTransform ? imgTransform[3] : page.view[3];
+          const transX = imgTransform ? imgTransform[4] : 0;
+          const transY = imgTransform ? imgTransform[5] : 0;
 
-        const pageLines = [];
-        ret.data.blocks?.forEach((b) => {
-          b.paragraphs?.forEach((p) => {
-            p.lines?.forEach((l) => {
-              const lineText = l.text.trim();
-              if (!lineText) return;
+          const pageLines = [];
+          ret?.data?.blocks?.forEach((b) => {
+            b.paragraphs?.forEach((p) => {
+              p.lines?.forEach((l) => {
+                const lineText = l.text.trim();
+                if (!lineText) return;
 
-              const x0 = l.bbox.x0 * scale;
-              const y0 = l.bbox.y0 * scale;
-              const x1 = l.bbox.x1 * scale;
-              const y1 = l.bbox.y1 * scale;
+                const x0 = l.bbox.x0 * scale;
+                const y0 = l.bbox.y0 * scale;
+                const x1 = l.bbox.x1 * scale;
+                const y1 = l.bbox.y1 * scale;
 
-              const pdfX = Math.round(transX + (x0 / largeImgObj.width) * scaleX);
-              const pdfY = Math.round(transY + ((largeImgObj.height - y1) / largeImgObj.height) * scaleY);
-              const pdfW = Math.round(((x1 - x0) / largeImgObj.width) * scaleX);
-              const pdfH = Math.round(((y1 - y0) / largeImgObj.height) * scaleY);
+                const pdfX = Math.round(transX + (x0 / largeImgObj.width) * scaleX);
+                const pdfY = Math.round(transY + ((largeImgObj.height - y1) / largeImgObj.height) * scaleY);
+                const pdfW = Math.round(((x1 - x0) / largeImgObj.width) * scaleX);
+                const pdfH = Math.round(((y1 - y0) / largeImgObj.height) * scaleY);
 
-              const cx = Math.floor((x0 + x1) / 2);
-              const cy = Math.floor((y0 + y1) / 2);
-              const sampled = sampleColorFromImage(largeImgObj, cx, cy);
-              const cat = getColorCategory(sampled);
+                const cx = Math.floor((x0 + x1) / 2);
+                const cy = Math.floor((y0 + y1) / 2);
+                const sampled = sampleColorFromImage(largeImgObj, cx, cy);
+                const cat = getColorCategory(sampled);
 
-              let taggedText = lineText;
-              if (cat !== 'black') {
-                taggedText = `<font color="rgb(${sampled.join(',')})" data-cat="${cat}">${lineText}</font>`;
-              }
-              taggedText += ` <!-- BOX:{"x":${pdfX},"y":${pdfY},"w":${pdfW},"h":${pdfH},"page":${pageNum}} -->`;
-              pageLines.push(taggedText);
+                let taggedText = lineText;
+                if (cat !== 'black') {
+                  taggedText = `<font color="rgb(${sampled.join(',')})" data-cat="${cat}">${lineText}</font>`;
+                }
+                taggedText += ` <!-- BOX:{"x":${pdfX},"y":${pdfY},"w":${pdfW},"h":${pdfH},"page":${pageNum}} -->`;
+                pageLines.push(taggedText);
+              });
             });
           });
-        });
 
-        const pageText = pageLines.join('\n').trim();
-        if (pageText) {
-          fullText += `<!-- PAGE ${pageNum} -->\n` + pageText + '\n\n';
+          const pageText = pageLines.join('\n').trim();
+          if (pageText) {
+            fullText += `<!-- PAGE ${pageNum} -->\n` + pageText + '\n\n';
+          }
+        } catch (ocrErr) {
+          console.warn(`[PDF OCR] Page ${pageNum} OCR bypassed:`, ocrErr.message);
         }
         continue;
       }

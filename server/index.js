@@ -82,7 +82,11 @@ app.post('/api/analyze', upload.single('file'), async (req, res) => {
 
     if (req.file) {
       documentName = req.file.originalname;
-      documentText = await extractDocumentText(documentName, req.file.buffer);
+      if (req.body.text && req.body.text.trim().length > 0) {
+        documentText = req.body.text.trim();
+      } else {
+        documentText = await extractDocumentText(documentName, req.file.buffer);
+      }
     } else if (req.body.text) {
       documentText = req.body.text.trim();
       documentName = req.body.title || 'Document Text';
@@ -181,7 +185,7 @@ app.post(
         if (/\.docx$/i.test(nameA)) {
           docxHtmlA = await extractDocxHtml(fileA.buffer);
         }
-        if (req.body.textA && req.body.textA.trim().length > 0 && !/\.pdf$/i.test(nameA)) {
+        if (req.body.textA && req.body.textA.trim().length > 0) {
           textA = req.body.textA.trim();
         } else {
           textA = await extractDocumentText(nameA, fileA.buffer);
@@ -202,7 +206,7 @@ app.post(
         if (/\.docx$/i.test(nameB)) {
           docxHtmlB = await extractDocxHtml(fileB.buffer);
         }
-        if (req.body.textB && req.body.textB.trim().length > 0 && !/\.pdf$/i.test(nameB)) {
+        if (req.body.textB && req.body.textB.trim().length > 0) {
           textB = req.body.textB.trim();
         } else {
           textB = await extractDocumentText(nameB, fileB.buffer);
