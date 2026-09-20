@@ -3,7 +3,7 @@ import UploadZone from './UploadZone';
 import ResultsDisplay from './ResultsDisplay';
 import ErrorBoundary from './ErrorBoundary';
 import { compareDocuments } from '../api';
-import { compressPdfIfNeeded } from '../utils/pdfCompressor';
+import { compressPdfIfNeeded, compressImageIfNeeded } from '../utils/pdfCompressor';
 import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
 import { GitCompare, Sparkles, Loader2, AlertCircle, FileCode } from 'lucide-react';
 
@@ -142,8 +142,26 @@ export default function CompareView({ onOpenQA }) {
         } catch (_) {}
       }
 
-      const uploadFileA = await compressPdfIfNeeded(fileA, 25 * 1024 * 1024);
-      const uploadFileB = await compressPdfIfNeeded(fileB, 25 * 1024 * 1024);
+      // Stay strictly under Vercel serverless 4.5MB request payload limit
+      const targetPerFileLimit = (fileA && fileB) ? (1.8 * 1024 * 1024) : (3.5 * 1024 * 1024);
+
+      let uploadFileA = fileA;
+      if (fileA) {
+        if (isPdfA) {
+          uploadFileA = await compressPdfIfNeeded(fileA, targetPerFileLimit);
+        } else if (isImgA) {
+          uploadFileA = await compressImageIfNeeded(fileA, targetPerFileLimit);
+        }
+      }
+
+      let uploadFileB = fileB;
+      if (fileB) {
+        if (isPdfB) {
+          uploadFileB = await compressPdfIfNeeded(fileB, targetPerFileLimit);
+        } else if (isImgB) {
+          uploadFileB = await compressImageIfNeeded(fileB, targetPerFileLimit);
+        }
+      }
 
       const data = await compareDocuments({
         fileA: uploadFileA,

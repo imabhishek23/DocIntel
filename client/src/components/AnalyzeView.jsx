@@ -3,6 +3,7 @@ import UploadZone from './UploadZone';
 import ResultsDisplay from './ResultsDisplay';
 import ErrorBoundary from './ErrorBoundary';
 import { analyzeDocument } from '../api';
+import { compressPdfIfNeeded, compressImageIfNeeded } from '../utils/pdfCompressor';
 import { Sparkles, Loader2, AlertCircle, FileCode } from 'lucide-react';
 
 const SAMPLE_CONTRACT = `MASTER SERVICES AGREEMENT
@@ -56,10 +57,20 @@ export default function AnalyzeView({ onOpenQA }) {
 
     try {
       const isPdf = file && (file.type === 'application/pdf' || file.name?.toLowerCase().endsWith('.pdf'));
+      const isImg = file && (file.type?.startsWith('image/') || /\.(png|jpe?g|webp|bmp)$/i.test(file.name));
       const pdfUrl = isPdf ? URL.createObjectURL(file) : null;
 
+      let uploadFile = file;
+      if (file) {
+        if (isPdf) {
+          uploadFile = await compressPdfIfNeeded(file, 3.5 * 1024 * 1024);
+        } else if (isImg) {
+          uploadFile = await compressImageIfNeeded(file, 3.5 * 1024 * 1024);
+        }
+      }
+
       const data = await analyzeDocument({
-        file,
+        file: uploadFile,
         text: file ? null : text,
         title: file ? file.name : 'Analyzed Agreement',
       });

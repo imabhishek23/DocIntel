@@ -32,9 +32,19 @@ export async function analyzeDocument({ file, text, title }) {
     body: formData,
   });
 
-  const data = await res.json();
+  if (res.status === 413) {
+    throw new Error('Upload payload too large for serverless limit (max ~4.5MB). The document has been automatically optimized, but please try using fewer pages or a lower-resolution file.');
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (_) {
+    throw new Error(`Server returned status ${res.status} (${res.statusText || 'Unknown error'})`);
+  }
+
   if (!res.ok) {
-    throw new Error(data.error || `Analysis failed (HTTP ${res.status})`);
+    throw new Error(data?.error || `Analysis failed (HTTP ${res.status})`);
   }
   return data;
 }
@@ -63,9 +73,19 @@ export async function compareDocuments({ fileA, textA, nameA, fileB, textB, name
     body: formData,
   });
 
-  const data = await res.json();
+  if (res.status === 413) {
+    throw new Error('Upload payload too large for serverless limit (max ~4.5MB). The documents were automatically compressed, but please try using fewer pages or lower-resolution files.');
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (_) {
+    throw new Error(`Server returned status ${res.status} (${res.statusText || 'Unknown error'})`);
+  }
+
   if (!res.ok) {
-    throw new Error(data.error || `Comparison failed (HTTP ${res.status})`);
+    throw new Error(data?.error || `Comparison failed (HTTP ${res.status})`);
   }
   return data;
 }
