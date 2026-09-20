@@ -1506,10 +1506,16 @@ function isOcrWordMatch(normA, normB) {
     if (levenshteinDist(normA, normB) <= 2) return true;
   }
 
-  // Length >= 6 words (e.g. 'adverse' vs 'acvarso', 'adherence' vs 'acharanca', 'appetite' vs 'appa')
+  // Medical abbreviations & Latin phrases (e.g. 'e.g.' -> 'eg', OCR noise: '¢9', 'e9', 'c9', '9', 'cg')
+  if (normA === 'eg' && /^(?:eg|¢g|cg|e9|9|c9|¢9)$/i.test(normB)) return true;
+  if (normB === 'eg' && /^(?:eg|¢g|cg|e9|9|c9|¢9)$/i.test(normA)) return true;
+
+  // Length >= 6 words (e.g. 'adverse' vs 'acvarso', 'adherence' vs 'acharanca', 'limited' vs 'imited', 'appetite' vs 'petite')
   if (normA.length >= 6 && normB.length >= 3) {
     if (normA.startsWith(normB) && normB.length >= 4) return true;
     if (normB.startsWith(normA) && normA.length >= 4) return true;
+    if (normA.endsWith(normB) && normB.length >= 4) return true;
+    if (normB.endsWith(normA) && normA.length >= 4) return true;
     const maxLen = Math.max(normA.length, normB.length);
     const dist = levenshteinDist(normA, normB);
     if (maxLen >= 10 && dist <= 4) return true;

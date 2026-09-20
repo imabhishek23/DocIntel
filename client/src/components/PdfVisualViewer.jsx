@@ -124,10 +124,16 @@ function isOcrWordMatch(normA, normB) {
     if (levenshteinDist(normA, normB) <= 2) return true;
   }
 
-  // Length >= 6 words (e.g. 'adverse' vs 'acvarso', 'adherence' vs 'acharanca', 'appetite' vs 'appa')
+  // Medical abbreviations & Latin phrases (e.g. 'e.g.' -> 'eg', OCR noise: '¢9', 'e9', 'c9', '9', 'cg')
+  if (normA === 'eg' && /^(?:eg|¢g|cg|e9|9|c9|¢9)$/i.test(normB)) return true;
+  if (normB === 'eg' && /^(?:eg|¢g|cg|e9|9|c9|¢9)$/i.test(normA)) return true;
+
+  // Length >= 6 words (e.g. 'adverse' vs 'acvarso', 'adherence' vs 'acharanca', 'limited' vs 'imited', 'appetite' vs 'petite')
   if (normA.length >= 6 && normB.length >= 3) {
     if (normA.startsWith(normB) && normB.length >= 4) return true;
     if (normB.startsWith(normA) && normA.length >= 4) return true;
+    if (normA.endsWith(normB) && normB.length >= 4) return true;
+    if (normB.endsWith(normA) && normA.length >= 4) return true;
     const maxLen = Math.max(normA.length, normB.length);
     const dist = levenshteinDist(normA, normB);
     if (maxLen >= 10 && dist <= 4) return true;
@@ -227,42 +233,11 @@ function computePageHighlights(
       const hasWordErrors = realWordErrors.length > 0;
 
       if (isMatch) {
-        directHighlights.push({
-          id: `isi_box_match_${lr.lineNum || lr.lineIndex || idx}`,
-          index: lr.lineNum || lr.lineIndex || idx,
-          target: lr.text,
-          box: cssBox,
-          boxes: [cssBox],
-          isMatch: true,
-          isError: false,
-          color: 'rgba(34, 197, 94, 0.28)',
-          borderColor: '#16a34a',
-          comment: lr.comment || 'Complete line match',
-          category: 'Approved ISI Line',
-          severity: 'low',
-          expected: lr.expected || lr.text,
-          found: lr.found || lr.text,
-          lineResult: lr,
-        });
+        // User Requirement: "if line is complte match thenno need to mark anything... dont hight if everthuing is oky"
+        // Complete matching line: leave completely clean and unmarked!
+        continue;
       } else if (hasWordErrors) {
-        directHighlights.push({
-          id: `isi_box_line_${lr.lineNum || lr.lineIndex || idx}`,
-          index: lr.lineNum || lr.lineIndex || idx,
-          target: lr.text,
-          box: cssBox,
-          boxes: [cssBox],
-          isMatch: true,
-          isError: false,
-          color: 'rgba(34, 197, 94, 0.20)',
-          borderColor: '#22c55e',
-          comment: lr.comment || 'Line match with discrepancies',
-          category: lr.status === 'color_mismatch' ? 'Color Mismatch' : 'Approved ISI Line',
-          severity: 'medium',
-          expected: lr.expected || lr.text,
-          found: lr.found || lr.text,
-          lineResult: lr,
-        });
-
+        // User Requirement: Do NOT mark the whole line! ONLY mark the specific word discrepancies / color mismatches!
         realWordErrors.forEach((we, wIdx) => {
           const weWord = we.word || we.clean;
           if (!weWord) return;
@@ -287,7 +262,7 @@ function computePageHighlights(
           };
 
           const errCategory =
-            we.type === 'color' || we.type === 'color_mismatch'
+            isColorType
               ? 'Color Mismatch'
               : we.type === 'number'
               ? 'Number Mismatch'
@@ -307,6 +282,10 @@ function computePageHighlights(
               ? 'Punctuation Difference'
               : 'Word Mistake';
 
+          const colorIssueMsg = isColorType
+            ? (we.issue || `Color Mismatch: Found "${weWord}" in ${we.foundColorName || 'custom color'}, expected ${we.expectedColorName || 'standard (black)'}`)
+            : (we.issue || 'Discrepancy');
+
           directHighlights.push({
             id: `isi_box_word_${lr.lineNum || lr.lineIndex || idx}_${wIdx}`,
             index: lr.lineNum || lr.lineIndex || idx,
@@ -316,15 +295,25 @@ function computePageHighlights(
             isMatch: false,
             isError: true,
             isWordDiscrepancy: true,
+            isColorDiff: isColorType,
             color: isColorType ? 'rgba(245, 158, 11, 0.35)' : 'rgba(239, 68, 68, 0.50)',
             borderColor: isColorType ? '#d97706' : '#dc2626',
-            comment: we.issue || 'Discrepancy',
+            comment: colorIssueMsg,
             category: errCategory,
             severity: isColorType ? 'medium' : 'high',
-            expected: we.expected,
-            found: weWord,
-            details: we.issue,
+            expected: isColorType ? (we.expectedColorName || we.expected || 'standard (black)') : we.expected,
+            found: isColorType ? (we.foundColorName || weWord || 'custom color') : weWord,
+            details: colorIssueMsg,
             lineResult: lr,
+            discrepancy: {
+              id: `isi_box_word_${lr.lineNum || lr.lineIndex || idx}_${wIdx}`,
+              category: errCategory,
+              type: we.type || (isColorType ? 'color_mismatch' : 'word_mismatch'),
+              severity: isColorType ? 'medium' : 'high',
+              expected: isColorType ? (we.expectedColorName || we.expected || 'standard (black)') : we.expected,
+              found: isColorType ? (we.foundColorName || weWord || 'custom color') : weWord,
+              details: colorIssueMsg,
+            },
           });
         });
       } else {
@@ -420,6 +409,7 @@ function computePageHighlights(
       /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*≥|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*≥|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|Lancotz|Delany|Fichenboun|To\s+report\s+SUSPECTED|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
 
     const highlights = [];
+    let matchedAnyVectorLine = false;
 
     for (let pIdx = 0; pIdx < pageLines.length; pIdx++) {
       const pl = pageLines[pIdx];
@@ -482,6 +472,7 @@ function computePageHighlights(
       }
 
       if (matchedLr) {
+        matchedAnyVectorLine = true;
         const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
         const safeLineBox = { ...pl.box, h: safeLineH };
 
@@ -500,25 +491,11 @@ function computePageHighlights(
         const isLineMatch = matchedLr.color === 'green';
 
         // Base line highlight:
-        // - Complete match -> clean GREEN box (User Requirement: "macth kp green")
-        // - Mismatches / extra lines -> RED box (User Requirement: "mismatch hop to red")
-        // - Lines with word errors -> subtle GREEN base line with localized RED word errors
+        // - Complete match -> Leave completely unmarked per user requirement ("dont hight if everthuing is oky")
+        // - Mismatches / extra lines -> RED box
+        // - Lines with word errors -> Do NOT mark the whole line; only mark the specific localized word errors below
         if (isMatch) {
-          highlights.push({
-            id: `isi_line_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
-            index: matchedLr.lineNum || matchedLr.lineIndex || pIdx,
-            target: pl.text,
-            box: safeLineBox,
-            boxes: [safeLineBox],
-            isMatch: true,
-            isError: false,
-            color: 'green',
-            category: 'Complete Line Match',
-            details: '✓ Verified Line Match',
-            comment: matchedLr.comment || '✓ Verified Line Match',
-            expected: matchedLr.expected || pl.text,
-            found: pl.text,
-          });
+          // Complete matching line: leave clean and unmarked
         } else if (!isLineMatch) {
           highlights.push({
             id: `isi_line_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
@@ -538,21 +515,7 @@ function computePageHighlights(
             isMissingLine: matchedLr.status === 'missing_line',
           });
         } else if (hasWordErrors) {
-          highlights.push({
-            id: `isi_line_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
-            index: matchedLr.lineNum || matchedLr.lineIndex || pIdx,
-            target: pl.text,
-            box: safeLineBox,
-            boxes: [safeLineBox],
-            isMatch: true,
-            isError: false,
-            color: 'green',
-            category: matchedLr.status === 'color_mismatch' ? 'Color Mismatch' : 'Verified Line with Discrepancy',
-            details: matchedLr.status === 'color_mismatch' ? matchedLr.comment : 'Line matched sequence with localized word discrepancy',
-            comment: matchedLr.comment,
-            expected: matchedLr.expected || pl.text,
-            found: pl.text,
-          });
+          // User Requirement: Do NOT mark the entire line with a green/red box! Only mark the specific localized word errors below.
         }
 
         // Word error localized highlights inside this visual line
@@ -617,7 +580,7 @@ function computePageHighlights(
 
             if (wordBox) {
               const errCategory =
-                we.type === 'color' || we.type === 'color_mismatch'
+                isColorType
                   ? 'Color Mismatch'
                   : we.type === 'number'
                   ? 'Number Mismatch'
@@ -637,6 +600,10 @@ function computePageHighlights(
                   ? 'Punctuation Difference'
                   : 'Word Mistake';
 
+              const colorIssueMsg = isColorType
+                ? (we.issue || `Color Mismatch: Found "${weWord}" in ${we.foundColorName || 'custom color'}, expected ${we.expectedColorName || 'standard (black)'}`)
+                : (we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`);
+
               highlights.push({
                 id: `word_err_${pIdx}_${wIdx}`,
                 index: pIdx,
@@ -645,23 +612,24 @@ function computePageHighlights(
                 boxes: [wordBox],
                 isMatch: false,
                 isError: true,
+                isColorDiff: isColorType,
                 color: isColorType ? 'rgba(245, 158, 11, 0.35)' : 'red',
                 borderColor: isColorType ? '#d97706' : '#dc2626',
                 isWordDiscrepancy: true,
                 category: errCategory,
                 severity: isColorType ? 'medium' : 'high',
-                details: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
-                comment: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
-                expected: we.expected || '(correct text)',
-                found: weWord,
+                details: colorIssueMsg,
+                comment: colorIssueMsg,
+                expected: isColorType ? (we.expectedColorName || we.expected || 'standard (black)') : (we.expected || '(correct text)'),
+                found: isColorType ? (we.foundColorName || weWord || 'custom color') : weWord,
                 discrepancy: {
                   id: `word_err_${pIdx}_${wIdx}`,
                   category: errCategory,
-                  type: we.type || 'word_mismatch',
-                  severity: 'high',
-                  expected: we.expected,
-                  found: weWord,
-                  details: we.issue,
+                  type: we.type || (isColorType ? 'color_mismatch' : 'word_mismatch'),
+                  severity: isColorType ? 'medium' : 'high',
+                  expected: isColorType ? (we.expectedColorName || we.expected || 'standard (black)') : we.expected,
+                  found: isColorType ? (we.foundColorName || weWord || 'custom color') : weWord,
+                  details: colorIssueMsg,
                 },
               });
             }
@@ -670,7 +638,7 @@ function computePageHighlights(
       }
     }
 
-    if (highlights.length > 0) {
+    if (highlights.length > 0 || matchedAnyVectorLine) {
       return highlights;
     }
   }
@@ -925,72 +893,8 @@ function computePageHighlights(
   }
   });
 
-  // ── GREEN HIGHLIGHTS: APPROVED MASTER WORD MATCHES ──
-  const NON_ISI_TEXT_REGEX =
-    /^(?:Arthur|Diabetes|Patient\s+(?:Profile|Snapshot|History)|living\s+with\s+diabetes|\d+\s+years\s+old|Clinical\s+Efficacy|Study\s+Design|See\s+Examples|Practice|Sign\s+Up|Visit|Click\s+Here|Observational\s+studies|Inform\s+your\s+patients)/i;
-
-  if (matchingTokens && matchingTokens.length > 0) {
-    matchingTokens.forEach((token, tIdx) => {
-      const targetStr = (token.text || '').trim();
-      if (!targetStr || targetStr.length < 3) return;
-
-      const normTarget = targetStr.replace(/\s+/g, ' ').toLowerCase();
-
-      for (let i = 0; i < itemBoxes.length; i++) {
-        // Skip non-ISI promotional elements in all ISI comparison modes
-        const shouldSkipNonIsi = isWordToPdf || isIsiComparison;
-        if (shouldSkipNonIsi && NON_ISI_TEXT_REGEX.test(itemBoxes[i].cleanStr)) continue;
-
-        let combined = '';
-        const span = [];
-        for (let j = i; j < Math.min(itemBoxes.length, i + 6); j++) {
-          const it = itemBoxes[j];
-          if (shouldSkipNonIsi && NON_ISI_TEXT_REGEX.test(it.cleanStr)) break;
-          span.push(it);
-          combined += (combined ? ' ' : '') + it.cleanStr.toLowerCase();
-
-          if (combined.includes(normTarget)) {
-            const minX = Math.min(...span.map((m) => m.x));
-            const minY = Math.min(...span.map((m) => m.y));
-            const maxX = Math.max(...span.map((m) => m.x + m.w));
-            const maxY = Math.max(...span.map((m) => m.y + m.h));
-
-            const box = {
-              x: Math.round(minX - 1),
-              y: Math.round(minY - 1),
-              w: Math.round(maxX - minX + 2),
-              h: Math.round(maxY - minY + 2),
-            };
-
-            // Avoid colliding with an existing red error box
-            const collidesWithRed = highlights.some((h) => {
-              if (h.isMatch) return false;
-              const hx = h.box?.x || 0;
-              const hy = h.box?.y || 0;
-              return Math.abs(hx - box.x) < 8 && Math.abs(hy - box.y) < 8;
-            });
-
-            if (!collidesWithRed) {
-              highlights.push({
-                id: `approved_match_${tIdx}_${i}`,
-                index: tIdx + 1,
-                target: targetStr,
-                box,
-                boxes: [box],
-                isMatch: true,
-                isError: false,
-                category: 'Approved Word Match',
-                details: `Approved ISI Match: "${targetStr}" matches approved Word master`,
-                expected: targetStr,
-                found: targetStr,
-              });
-            }
-            break;
-          }
-        }
-      }
-    });
-  }
+  // User Requirement: "if line is complte match thenno need to mark anything... dont hight if everthuing is oky"
+  // Approved master text and complete matches remain clean and unmarked on the PDF.
 
   return highlights;
 }
@@ -1553,20 +1457,22 @@ export default function PdfVisualViewer({
                 }`}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-                Red Errors ({pageHighlights.filter((h) => !h.isMatch).length || discrepancies.length})
+                Discrepancies ({pageHighlights.filter((h) => !h.isMatch && !h.isColorDiff && h.category !== 'Color Mismatch').length})
               </button>
-              <button
-                type="button"
-                onClick={() => setHighlightFilter('matches')}
-                className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
-                  highlightFilter === 'matches'
-                    ? 'bg-emerald-600 text-white shadow-xs'
-                    : 'text-emerald-700 hover:bg-emerald-100'
-                }`}
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                Green Matches ({pageHighlights.filter((h) => h.isMatch).length || matchingTokens.length})
-              </button>
+              {pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setHighlightFilter('color')}
+                  className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
+                    highlightFilter === 'color'
+                      ? 'bg-amber-600 text-white shadow-xs'
+                      : 'text-amber-700 hover:bg-amber-100'
+                  }`}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                  Color Mismatch ({pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length})
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setHighlightFilter('all')}
@@ -1576,7 +1482,7 @@ export default function PdfVisualViewer({
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                All Overlays
+                All ({pageHighlights.length})
               </button>
             </div>
           )}
@@ -1662,12 +1568,25 @@ export default function PdfVisualViewer({
                 >
                   {pageHighlights
                     .filter((hl) => {
-                      if (highlightFilter === 'errors') return !hl.isMatch;
-                      if (highlightFilter === 'matches') return !!hl.isMatch;
+                      if (highlightFilter === 'errors') return !hl.isMatch && !hl.isColorDiff && hl.category !== 'Color Mismatch';
+                      if (highlightFilter === 'color') return hl.isColorDiff || hl.category === 'Color Mismatch';
                       return true;
                     })
                     .map((hl) => {
                       const isMatch = !!hl.isMatch;
+                      const isColorMismatch =
+                        hl.category === 'Color Mismatch' ||
+                        hl.isColorDiff ||
+                        hl.type === 'color_mismatch' ||
+                        hl.type === 'color' ||
+                        (hl.category && hl.category.toLowerCase().includes('color')) ||
+                        (hl.discrepancy && (
+                          hl.discrepancy.category === 'Color Mismatch' ||
+                          hl.discrepancy.type === 'color_mismatch' ||
+                          hl.discrepancy.type === 'color' ||
+                          (hl.discrepancy.category && hl.discrepancy.category.toLowerCase().includes('color'))
+                        ));
+
                       const isSelected = !!(
                         (selectedError?.id && hl.discrepancy?.id && selectedError.id === hl.discrepancy.id) ||
                         (selectedError?.id && hl.id && selectedError.id === hl.id)
@@ -1697,14 +1616,16 @@ export default function PdfVisualViewer({
                                   ? isSelected
                                     ? 'border-b-2 border-emerald-600 bg-emerald-300/50 ring-1 ring-emerald-500 z-20'
                                     : 'border-b border-emerald-500/70 bg-emerald-200/35 hover:bg-emerald-300/45 z-10'
+                                  : isColorMismatch
+                                  ? isSelected
+                                    ? 'border-2 border-amber-600 bg-amber-400/60 ring-2 ring-amber-500 z-30 shadow-md'
+                                    : 'border-2 border-amber-500 bg-amber-200/45 hover:bg-amber-300/55 ring-1 ring-amber-400/70 shadow-xs z-25 text-amber-950'
                                   : isSelected
                                   ? 'border-2 border-rose-600 bg-rose-400/60 ring-2 ring-rose-500 z-30 shadow-md'
                                   : hl.isWordDiscrepancy
                                   ? 'border-2 border-rose-600 bg-rose-300/70 ring-1 ring-rose-500 shadow-sm z-25'
                                   : hl.isMissingLine || hl.isMissingWord
                                   ? 'border-b-2 border-dashed border-rose-600 bg-rose-200/40 z-15'
-                                  : hl.isColorDiff
-                                  ? 'border-b border-amber-500 bg-amber-200/35 hover:bg-amber-300/45 z-10'
                                   : 'border-b-2 border-rose-500 bg-rose-200/35 hover:bg-rose-300/45 z-10'
                               }`}
                               onClick={(e) => {
@@ -1712,7 +1633,9 @@ export default function PdfVisualViewer({
                                 setSelectedError(isSelected ? null : (hl.discrepancy || hl));
                               }}
                               title={
-                                hl.isWordDiscrepancy
+                                isColorMismatch
+                                  ? `🎨 Color Mismatch: "${hl.target}" — ${hl.details || hl.comment || 'Color differs from reference master'}`
+                                  : hl.isWordDiscrepancy
                                   ? `⚠ ${hl.category}: "${hl.target}" — ${hl.details}`
                                   : hl.isMissingLine
                                   ? `⚠ Missing line: "${hl.target}"`
@@ -1723,14 +1646,15 @@ export default function PdfVisualViewer({
                                   : `#${hl.index} ${hl.category}: ${hl.details}`
                               }
                             >
-                              {/* Error / Discrepancy indicator badge:
-                                  - For matches: NEVER show badge over text so words and lines remain 100% visible!
-                                  - For word errors: show distinct red badge!
-                              */}
+                              {/* Error / Discrepancy indicator badge */}
                               {!isMatch && (
                                 <span
                                   className={`absolute -top-3 right-0 flex items-center justify-center h-4 px-1.5 rounded-full text-white text-[9px] font-bold shadow-xs whitespace-nowrap pointer-events-none transition-opacity ${
-                                    isSelected
+                                    isColorMismatch
+                                      ? isSelected
+                                        ? 'opacity-100 bg-amber-600 ring-1 ring-white'
+                                        : 'opacity-95 group-hover:opacity-100 bg-amber-600 ring-1 ring-white shadow-xs'
+                                      : isSelected
                                       ? 'opacity-100 bg-rose-600 ring-1 ring-white'
                                       : hl.isMissingLine
                                       ? 'opacity-100 bg-rose-700 ring-1 ring-white'
@@ -1740,49 +1664,52 @@ export default function PdfVisualViewer({
                                       ? 'opacity-100 bg-rose-700 ring-1 ring-white'
                                       : hl.isWordDiscrepancy
                                       ? 'opacity-0 group-hover:opacity-100 bg-rose-600 ring-1 ring-white shadow-xs'
-                                      : hl.isColorDiff
-                                      ? 'opacity-90 bg-amber-600'
                                       : 'opacity-0 group-hover:opacity-100 bg-rose-600'
                                   }`}
                                 >
-                                  {hl.isWordDiscrepancy
+                                  {isColorMismatch
+                                    ? '🎨 Color Mismatch'
+                                    : hl.isWordDiscrepancy
                                     ? `⚠ ${hl.category.replace(' Difference', '').replace(' Mistake', '')}`
                                     : hl.isMissingLine
-                                    ? `Missing line`
+                                    ? 'Missing line'
                                     : hl.category === 'Extra Line'
-                                    ? `Extra line`
+                                    ? 'Extra line'
                                     : hl.isMissingWord
-                                    ? `^ Missing`
+                                    ? '^ Missing'
                                     : `#${hl.index}`}
                                 </span>
                               )}
 
                               {/* Hover Tooltip Card */}
                               <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs p-2.5 rounded-xl bg-slate-900/95 text-white text-[11px] shadow-2xl z-50 pointer-events-none backdrop-blur-xs border border-slate-700 animate-fadeIn">
-                                <div className="flex items-center gap-1.5 font-bold text-rose-300">
-                                  <span
-                                    className={`rounded px-1.5 py-0.5 text-[9px] uppercase border font-extrabold ${
-                                      isMatch
-                                        ? 'bg-emerald-500/30 text-emerald-200 border-emerald-400/30'
-                                        : 'bg-rose-500/30 text-rose-300 border-rose-400/30'
-                                    }`}
-                                  >
-                                    {isMatch ? '✓ Complete Line Match' : `#${hl.index} ${hl.category}`}
-                                  </span>
-                                  {hl.isColorDiff && (
-                                    <span className="rounded bg-amber-500/30 text-amber-200 px-1 py-0.5 text-[8px] uppercase border border-amber-400/30">
-                                      Visual Color
+                                <div className="flex items-center gap-1.5 font-bold">
+                                  {isColorMismatch ? (
+                                    <span className="rounded px-1.5 py-0.5 text-[9px] uppercase border font-extrabold bg-amber-500/30 text-amber-200 border-amber-400/40">
+                                      🎨 Color Mismatch
+                                    </span>
+                                  ) : isMatch ? (
+                                    <span className="rounded px-1.5 py-0.5 text-[9px] uppercase border font-extrabold bg-emerald-500/30 text-emerald-200 border-emerald-400/30">
+                                      ✓ Complete Line Match
+                                    </span>
+                                  ) : (
+                                    <span className="rounded px-1.5 py-0.5 text-[9px] uppercase border font-extrabold bg-rose-500/30 text-rose-300 border-rose-400/30">
+                                      #{hl.index} {hl.category}
                                     </span>
                                   )}
                                 </div>
                                 <div className="text-slate-200 mt-1 leading-snug line-clamp-2">
-                                  {isMatch
+                                  {isColorMismatch
+                                    ? hl.details || hl.comment || 'Color Mismatch: Text color differs from approved reference standard.'
+                                    : isMatch
                                     ? `Complete line matches approved reference standard: "${hl.target}"`
                                     : hl.details || hl.comment}
                                 </div>
                                 <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1.5 pt-1 border-t border-slate-800">
                                   <span>
-                                    {isMatch ? (
+                                    {isColorMismatch ? (
+                                      <>Expected: <strong className="text-amber-300">{hl.expected || 'standard (black)'}</strong> | Found: <strong className="text-amber-300">{hl.found || 'custom color'}</strong></>
+                                    ) : isMatch ? (
                                       <>Status: <strong className="text-emerald-300">Verified Master</strong></>
                                     ) : (
                                       <>Expected: <strong className="text-emerald-300">{hl.expected}</strong></>
@@ -1812,15 +1739,12 @@ export default function PdfVisualViewer({
               <span>Composite Discrepancy Inspector</span>
               <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 text-rose-900 border border-rose-300 px-1.5 py-0.5 text-[10px] font-bold">
                 <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
-                {discrepancies.length} Red Errors
+                {discrepancies.filter((d) => d.category !== 'Color Mismatch' && !d.type?.includes('color')).length || discrepancies.length} Discrepancies
               </span>
-              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-100 text-emerald-900 border border-emerald-300 px-1.5 py-0.5 text-[10px] font-bold">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
-                {pageHighlights.filter((h) => h.isMatch).length || matchingTokens.length} Green Matches
-              </span>
-              {pageHighlights.filter((h) => h.isColorDiff).length > 0 && (
+              {(pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length > 0 || discrepancies.filter((d) => d.category === 'Color Mismatch' || d.type?.includes('color')).length > 0) && (
                 <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 text-[10px] font-bold">
-                  {pageHighlights.filter((h) => h.isColorDiff).length} Color Shifts
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
+                  {pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length || discrepancies.filter((d) => d.category === 'Color Mismatch' || d.type?.includes('color')).length} Color Mismatches
                 </span>
               )}
             </div>
@@ -1830,7 +1754,7 @@ export default function PdfVisualViewer({
               </span>
             ) : (
               <span className="text-[11px] text-slate-500">
-                Click red marker on page or pill below to inspect & comment
+                Click marker on page or pill below to inspect & comment
               </span>
             )}
           </div>
@@ -1841,16 +1765,19 @@ export default function PdfVisualViewer({
             <div className="flex gap-2 overflow-x-auto pb-1 pt-0.5 scrollbar-thin">
               {discrepancies.slice(0, 10).map((err, idx) => {
                 const isSelected = selectedError?.id === err.id;
+                const isColor = err.category === 'Color Mismatch' || err.type?.includes('color');
                 const catColor =
-                  err.category === 'Spacing'
+                  isColor
+                    ? 'bg-amber-50 border-amber-300 text-amber-950'
+                    : err.category === 'Spacing'
                     ? 'bg-sky-50 border-sky-300 text-sky-900'
                     : err.category === 'Punctuation'
                     ? 'bg-pink-50 border-pink-300 text-pink-900'
-                    : err.category === 'Numbers & Units'
-                    ? 'bg-rose-50 border-rose-300 text-rose-900'
+                    : err.category === 'Numbers & Units' || err.category === 'Number Mismatch'
+                    ? 'bg-cyan-50 border-cyan-300 text-cyan-950'
                     : err.category === 'Formatting (Bold / Italic)'
                     ? 'bg-purple-50 border-purple-300 text-purple-900'
-                    : 'bg-amber-50 border-amber-300 text-amber-900';
+                    : 'bg-rose-50 border-rose-300 text-rose-900';
 
                 return (
                   <button
@@ -1862,7 +1789,7 @@ export default function PdfVisualViewer({
                   >
                     <span className="font-mono text-[10px] font-bold opacity-70">#{idx + 1}</span>
                     <span className="font-semibold truncate max-w-[150px]">
-                      {err.category}: {err.found || err.details}
+                      {isColor ? '🎨 Color' : err.category}: {err.found || err.details}
                     </span>
                   </button>
                 );
@@ -1877,11 +1804,17 @@ export default function PdfVisualViewer({
 
           {/* Active Discrepancy Spotlight Card */}
           {selectedError && (
-            <div className="mt-2 rounded-xl border-2 border-rose-200 bg-white p-3.5 shadow-md text-xs space-y-2.5 animate-fadeIn">
+            <div className={`mt-2 rounded-xl border-2 bg-white p-3.5 shadow-md text-xs space-y-2.5 animate-fadeIn ${
+              selectedError.category === 'Color Mismatch' || selectedError.type?.includes('color') ? 'border-amber-300' : 'border-rose-200'
+            }`}>
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="rounded bg-rose-100 text-rose-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">
+                    <span className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
+                      selectedError.category === 'Color Mismatch' || selectedError.type?.includes('color')
+                        ? 'bg-amber-100 text-amber-900 border border-amber-300'
+                        : 'bg-rose-100 text-rose-900'
+                    }`}>
                       {selectedError.category}
                     </span>
                     <span className="font-bold text-slate-900 text-sm">
@@ -1911,10 +1844,18 @@ export default function PdfVisualViewer({
                   </span>
                 </div>
                 <div className="space-y-0.5">
-                  <span className="text-rose-700 block font-bold uppercase text-[9px] tracking-wider">
+                  <span className={`block font-bold uppercase text-[9px] tracking-wider ${
+                    selectedError.category === 'Color Mismatch' || selectedError.type?.includes('color')
+                      ? 'text-amber-800'
+                      : 'text-rose-700'
+                  }`}>
                     Found in Composite Target:
                   </span>
-                  <span className="font-bold text-rose-900 break-words">
+                  <span className={`font-bold break-words ${
+                    selectedError.category === 'Color Mismatch' || selectedError.type?.includes('color')
+                      ? 'text-amber-950'
+                      : 'text-rose-900'
+                  }`}>
                     {selectedError.found}
                   </span>
                 </div>
