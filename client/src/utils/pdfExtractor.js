@@ -106,8 +106,32 @@ function assembleLineItems(lineItems) {
 }
 
 /**
+ * Creates a configured Tesseract worker with CDN-hosted fast language models
+ * to prevent 404 errors and memory leaks in the browser.
+ */
+export async function createBrowserWorker(onProgress = null) {
+  const { createWorker } = await import('tesseract.js');
+  const worker = await createWorker('eng', 1, {
+    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@v7.0.0/dist/worker.min.js',
+    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v7.0.0',
+    langPath: 'https://tessdata.projectnaptha.com/4.0.0_fast',
+    workerBlobURL: true,
+    logger: (m) => {
+      if (onProgress && m.status && m.progress) {
+        const pct = Math.round(m.progress * 100);
+        if (pct % 25 === 0) {
+          onProgress(`Scanning scanned composite... (${pct}%)`);
+        }
+      }
+    },
+    errorHandler: (err) => console.warn('[Browser OCR Warning]:', err),
+  });
+  return worker;
+}
+
+/**
  * Extracts structured text with font styling and colors from a PDF File in browser
- * in under 100ms, completely avoiding serverless OCR timeouts.
+ * in under 100ms for vector PDFs, and via slice-based WebAssembly OCR for image composites.
  */
 export async function extractPdfTextInBrowser(file, onProgress = null) {
   if (!file) return '';
@@ -128,60 +152,141 @@ export async function extractPdfTextInBrowser(file, onProgress = null) {
       // If page has fewer than 35 vector text items, it is an image-based/scanned page or flattened composite
       if (items.length < 35) {
         try {
-          if (onProgress) onProgress(`Extracting content from scanned page ${pageNum} of ${pdf.numPages}...`);
+          if (onProgress) onProgress(`Scanning visual content on page ${pageNum} of ${pdf.numPages}...`);
           const origViewport = page.getViewport({ scale: 1.0 });
-          const targetWidth = 1100;
+          const targetWidth = 850;
           let scale = targetWidth / Math.max(origViewport.width, 1);
-          if (origViewport.height * scale > 7500) {
-            scale = 7500 / origViewport.height;
+          if (origViewport.height * scale > 8000) {
+            scale = 8000 / origViewport.height;
           }
           const viewport = page.getViewport({ scale });
           const canvas = document.createElement('canvas');
           canvas.width = Math.round(viewport.width);
           canvas.height = Math.round(viewport.height);
-          const ctx = canvas.getContext('2d');
+          const ctx = canvas.getContext('2d', { willReadFrequently: true });
           await page.render({ canvasContext: ctx, viewport }).promise;
 
-          const { createWorker } = await import('tesseract.js');
-          const worker = await createWorker('eng', 1);
-          const ret = await worker.recognize(canvas);
+          const worker = await createBrowserWorker(onProgress);
 
           const scaleBackX = origViewport.width / canvas.width;
           const scaleBackY = origViewport.height / canvas.height;
           const pageLines = [];
 
-          ret?.data?.lines?.forEach((l) => {
-            const lineText = (l.text || '').trim();
-            if (!lineText) return;
+          const totalH = canvas.height;
+          if (totalH > 2000) {
+            const sliceH = 1500;
+            const overlap = 80;
+            const numSlices = Math.ceil(totalH / (sliceH - overlap));
+            let lastY1 = -999;
+            let lastText = '';
 
-            const x0 = l.bbox.x0 * scaleBackX;
-            const y0 = l.bbox.y0 * scaleBackY;
-            const x1 = l.bbox.x1 * scaleBackX;
-            const y1 = l.bbox.y1 * scaleBackY;
+            for (let sIdx = 0; sIdx < numSlices; sIdx++) {
+              const startY = sIdx * (sliceH - overlap);
+              const curH = Math.min(sliceH, totalH - startY);
+              if (curH <= 0) break;
 
-            const pdfX = Math.round(x0);
-            const pdfY = Math.round(origViewport.height - y1);
-            const pdfW = Math.round(x1 - x0);
-            const pdfH = Math.round(y1 - y0);
+              if (onProgress) {
+                onProgress(`Scanning page ${pageNum}: section ${sIdx + 1} of ${numSlices}...`);
+              }
 
-            // Sample font color from canvas
-            const cx = Math.floor((l.bbox.x0 + l.bbox.x1) / 2);
-            const cy = Math.floor((l.bbox.y0 + l.bbox.y1) / 2);
-            let cat = 'black';
-            let sampled = [0, 0, 0];
-            try {
-              const p = ctx.getImageData(cx, cy, 1, 1).data;
-              sampled = [p[0], p[1], p[2]];
-              cat = getColorCategory(sampled);
-            } catch (_) {}
+              const sliceCanvas = document.createElement('canvas');
+              sliceCanvas.width = canvas.width;
+              sliceCanvas.height = curH;
+              const sCtx = sliceCanvas.getContext('2d');
+              sCtx.drawImage(canvas, 0, startY, canvas.width, curH, 0, 0, canvas.width, curH);
 
-            let taggedText = lineText;
-            if (cat !== 'black') {
-              taggedText = `<font color="rgb(${sampled.join(',')})" data-cat="${cat}">${lineText}</font>`;
+              const ret = await worker.recognize(sliceCanvas, {}, { blocks: true, text: true });
+              const rawBlocks = ret?.data?.blocks || [];
+
+              rawBlocks.forEach((b) => {
+                b.paragraphs?.forEach((p) => {
+                  p.lines?.forEach((l) => {
+                    const lineText = (l.text || '').trim();
+                    if (!lineText) return;
+
+                    const globalY0 = l.bbox.y0 + startY;
+                    const globalY1 = l.bbox.y1 + startY;
+
+                    if (Math.abs(globalY0 - lastY1) < 25 && lineText === lastText) {
+                      return;
+                    }
+                    lastY1 = globalY1;
+                    lastText = lineText;
+
+                    const x0 = l.bbox.x0 * scaleBackX;
+                    const y0 = globalY0 * scaleBackY;
+                    const x1 = l.bbox.x1 * scaleBackX;
+                    const y1 = globalY1 * scaleBackY;
+
+                    const pdfX = Math.round(x0);
+                    const pdfY = Math.round(origViewport.height - y1);
+                    const pdfW = Math.round(x1 - x0);
+                    const pdfH = Math.round(y1 - y0);
+
+                    // Sample font color from main canvas
+                    const cx = Math.floor((l.bbox.x0 + l.bbox.x1) / 2);
+                    const cy = Math.floor((globalY0 + globalY1) / 2);
+                    let cat = 'black';
+                    let sampled = [0, 0, 0];
+                    try {
+                      const p = ctx.getImageData(cx, cy, 1, 1).data;
+                      sampled = [p[0], p[1], p[2]];
+                      cat = getColorCategory(sampled);
+                    } catch (_) {}
+
+                    let taggedText = lineText;
+                    if (cat !== 'black') {
+                      taggedText = `<font color="rgb(${sampled.join(',')})" data-cat="${cat}">${lineText}</font>`;
+                    }
+                    taggedText += ` <!-- BOX:{"x":${pdfX},"y":${pdfY},"w":${pdfW},"h":${pdfH},"page":${pageNum}} -->`;
+                    pageLines.push(taggedText);
+                  });
+                });
+              });
+
+              sliceCanvas.width = 0;
+              sliceCanvas.height = 0;
             }
-            taggedText += ` <!-- BOX:{"x":${pdfX},"y":${pdfY},"w":${pdfW},"h":${pdfH},"page":${pageNum}} -->`;
-            pageLines.push(taggedText);
-          });
+          } else {
+            const ret = await worker.recognize(canvas, {}, { blocks: true, text: true });
+            const rawBlocks = ret?.data?.blocks || [];
+
+            rawBlocks.forEach((b) => {
+              b.paragraphs?.forEach((p) => {
+                p.lines?.forEach((l) => {
+                  const lineText = (l.text || '').trim();
+                  if (!lineText) return;
+
+                  const x0 = l.bbox.x0 * scaleBackX;
+                  const y0 = l.bbox.y0 * scaleBackY;
+                  const x1 = l.bbox.x1 * scaleBackX;
+                  const y1 = l.bbox.y1 * scaleBackY;
+
+                  const pdfX = Math.round(x0);
+                  const pdfY = Math.round(origViewport.height - y1);
+                  const pdfW = Math.round(x1 - x0);
+                  const pdfH = Math.round(y1 - y0);
+
+                  const cx = Math.floor((l.bbox.x0 + l.bbox.x1) / 2);
+                  const cy = Math.floor((l.bbox.y0 + l.bbox.y1) / 2);
+                  let cat = 'black';
+                  let sampled = [0, 0, 0];
+                  try {
+                    const p = ctx.getImageData(cx, cy, 1, 1).data;
+                    sampled = [p[0], p[1], p[2]];
+                    cat = getColorCategory(sampled);
+                  } catch (_) {}
+
+                  let taggedText = lineText;
+                  if (cat !== 'black') {
+                    taggedText = `<font color="rgb(${sampled.join(',')})" data-cat="${cat}">${lineText}</font>`;
+                  }
+                  taggedText += ` <!-- BOX:{"x":${pdfX},"y":${pdfY},"w":${pdfW},"h":${pdfH},"page":${pageNum}} -->`;
+                  pageLines.push(taggedText);
+                });
+              });
+            });
+          }
 
           await worker.terminate();
           canvas.width = 0;
@@ -193,7 +298,7 @@ export async function extractPdfTextInBrowser(file, onProgress = null) {
           }
           continue;
         } catch (ocrErr) {
-          console.warn(`[extractPdfTextInBrowser] Page ${pageNum} OCR fallback warning:`, ocrErr);
+          console.error(`[extractPdfTextInBrowser] Page ${pageNum} OCR error:`, ocrErr);
         }
       }
 

@@ -4,7 +4,7 @@ import ResultsDisplay from './ResultsDisplay';
 import ErrorBoundary from './ErrorBoundary';
 import { compareDocuments } from '../api';
 import { compressPdfIfNeeded, compressImageIfNeeded } from '../utils/pdfCompressor';
-import { extractPdfTextInBrowser } from '../utils/pdfExtractor';
+import { extractPdfTextInBrowser, createBrowserWorker } from '../utils/pdfExtractor';
 import { GitCompare, Sparkles, Loader2, AlertCircle, FileCode } from 'lucide-react';
 
 const SAMPLE_DOC_A = `NON-DISCLOSURE AGREEMENT (ORIGINAL DRAFT)
@@ -140,27 +140,31 @@ export default function CompareView({ onOpenQA }) {
       } else if (isImgA) {
         try {
           setCustomStatus('Extracting content from Image A...');
-          const { createWorker } = await import('tesseract.js');
-          const worker = await createWorker('eng', 1);
+          const worker = await createBrowserWorker((msg) => setCustomStatus(msg));
           const ret = await worker.recognize(fileA);
           extractedTextA = ret?.data?.text || '';
           await worker.terminate();
-        } catch (_) {}
+        } catch (err) {
+          console.warn('[CompareView] Image A OCR warning:', err);
+        }
       }
 
       if (isPdfB) {
         try {
           extractedTextB = await extractPdfTextInBrowser(fileB, setCustomStatus);
-        } catch (_) {}
+        } catch (err) {
+          console.warn('[CompareView] PDF B browser extraction warning:', err);
+        }
       } else if (isImgB) {
         try {
           setCustomStatus('Extracting content from Image B...');
-          const { createWorker } = await import('tesseract.js');
-          const worker = await createWorker('eng', 1);
+          const worker = await createBrowserWorker((msg) => setCustomStatus(msg));
           const ret = await worker.recognize(fileB);
           extractedTextB = ret?.data?.text || '';
           await worker.terminate();
-        } catch (_) {}
+        } catch (err) {
+          console.warn('[CompareView] Image B OCR warning:', err);
+        }
       }
 
       setCustomStatus('Optimizing documents for fast upload...');

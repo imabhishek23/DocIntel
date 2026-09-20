@@ -233,9 +233,24 @@ function computePageHighlights(
       const hasWordErrors = realWordErrors.length > 0;
 
       if (isMatch) {
-        // User Requirement: "if line is complte match thenno need to mark anything... dont hight if everthuing is oky"
-        // Complete matching line: leave completely clean and unmarked!
-        continue;
+        directHighlights.push({
+          id: `isi_box_match_${lr.lineNum || lr.lineIndex || idx}`,
+          index: lr.lineNum || lr.lineIndex || idx,
+          target: lr.text,
+          box: cssBox,
+          boxes: [cssBox],
+          isMatch: true,
+          isError: false,
+          color: 'rgba(34, 197, 94, 0.22)',
+          borderColor: '#16a34a',
+          comment: 'Approved Match: Identical to approved reference master',
+          category: 'Approved Match',
+          severity: 'low',
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+          details: 'Complete match with approved reference master',
+          lineResult: lr,
+        });
       } else if (hasWordErrors) {
         // User Requirement: Do NOT mark the whole line! ONLY mark the specific word discrepancies / color mismatches!
         realWordErrors.forEach((we, wIdx) => {
@@ -495,7 +510,24 @@ function computePageHighlights(
         // - Mismatches / extra lines -> RED box
         // - Lines with word errors -> Do NOT mark the whole line; only mark the specific localized word errors below
         if (isMatch) {
-          // Complete matching line: leave clean and unmarked
+          highlights.push({
+            id: `isi_line_match_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
+            index: matchedLr.lineNum || matchedLr.lineIndex || pIdx,
+            target: pl.text,
+            box: safeLineBox,
+            boxes: [safeLineBox],
+            isMatch: true,
+            isError: false,
+            color: 'rgba(34, 197, 94, 0.22)',
+            borderColor: '#16a34a',
+            comment: 'Approved Match: Identical to approved reference master',
+            category: 'Approved Match',
+            severity: 'low',
+            expected: matchedLr.expected || pl.text,
+            found: pl.text,
+            details: 'Complete line match with approved reference master',
+            lineResult: matchedLr,
+          });
         } else if (!isLineMatch) {
           highlights.push({
             id: `isi_line_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
@@ -1473,6 +1505,20 @@ export default function PdfVisualViewer({
                   Color Mismatch ({pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length})
                 </button>
               )}
+              {pageHighlights.filter((h) => h.isMatch).length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setHighlightFilter('matches')}
+                  className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
+                    highlightFilter === 'matches'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-emerald-700 hover:bg-emerald-100'
+                  }`}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  Matches ({pageHighlights.filter((h) => h.isMatch).length})
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setHighlightFilter('all')}
@@ -1570,6 +1616,7 @@ export default function PdfVisualViewer({
                     .filter((hl) => {
                       if (highlightFilter === 'errors') return !hl.isMatch && !hl.isColorDiff && hl.category !== 'Color Mismatch';
                       if (highlightFilter === 'color') return hl.isColorDiff || hl.category === 'Color Mismatch';
+                      if (highlightFilter === 'matches') return !!hl.isMatch;
                       return true;
                     })
                     .map((hl) => {
