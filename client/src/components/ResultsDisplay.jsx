@@ -707,14 +707,15 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
   const filteredMismatches = useMemo(() => {
     return (mismatchReport || []).filter((item) => {
       if (mismatchFilter !== 'all') {
+        if (mismatchFilter === 'Color Mismatch' && !item.errorType?.toLowerCase().includes('color')) return false;
+        if (mismatchFilter === 'Number Mismatch' && !item.errorType?.toLowerCase().includes('number')) return false;
         if (mismatchFilter === 'Missing Word' && !(item.errorType?.toLowerCase().includes('missing') || item.isMissingWord)) return false;
         if (mismatchFilter === 'Extra Word' && !(item.errorType?.toLowerCase().includes('extra') || item.isExtraWord)) return false;
-        if (mismatchFilter === 'Spelling / Word Mismatch' && !(item.errorType?.toLowerCase().includes('spelling') || item.errorType?.toLowerCase().includes('word') || item.errorType?.toLowerCase().includes('changed'))) return false;
+        if ((mismatchFilter === 'Word Mistake' || mismatchFilter === 'Spelling / Word Mismatch') && !(item.errorType?.toLowerCase().includes('spelling') || item.errorType?.toLowerCase().includes('word') || item.errorType?.toLowerCase().includes('changed'))) return false;
         if (mismatchFilter === 'Punctuation' && !item.errorType?.toLowerCase().includes('punctuation')) return false;
         if (mismatchFilter === 'Capitalization' && !item.errorType?.toLowerCase().includes('capitalization') && !item.errorType?.toLowerCase().includes('case')) return false;
         if (mismatchFilter === 'Formatting (Bold / Italic)' && !item.errorType?.toLowerCase().includes('format') && !item.errorType?.toLowerCase().includes('bold') && !item.errorType?.toLowerCase().includes('italic')) return false;
         if (mismatchFilter === 'Spacing' && !item.errorType?.toLowerCase().includes('spacing')) return false;
-        if (mismatchFilter === 'Color Mismatch' && !item.errorType?.toLowerCase().includes('color')) return false;
       }
       if (mismatchSearchQuery) {
         const q = mismatchSearchQuery.toLowerCase();
@@ -2269,14 +2270,15 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
               <span className="text-xs font-bold text-slate-500 mr-1">Filter:</span>
               {[
                 { id: 'all', label: `All Mismatches (${mismatchReport.length})` },
+                { id: 'Color Mismatch', label: `🎨 Color (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('color')).length})` },
+                { id: 'Number Mismatch', label: `🔢 Numbers (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('number')).length})` },
+                { id: 'Word Mistake', label: `📝 Word Mistakes (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('word') || m.errorType?.toLowerCase().includes('spelling') || m.errorType?.toLowerCase().includes('changed')).length})` },
                 { id: 'Missing Word', label: `⚠ Missing Words (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('missing') || m.isMissingWord).length})` },
                 { id: 'Extra Word', label: `+ Extra Words (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('extra') || m.isExtraWord).length})` },
-                { id: 'Spelling / Word Mismatch', label: `📝 Spelling (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('spelling') || m.errorType?.toLowerCase().includes('word') || m.errorType?.toLowerCase().includes('changed')).length})` },
-                { id: 'Punctuation', label: `⸲ Punctuation (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('punctuation')).length})` },
                 { id: 'Capitalization', label: `🔤 Capitalization (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('capitalization') || m.errorType?.toLowerCase().includes('case')).length})` },
-                { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('format') || m.errorType?.toLowerCase().includes('bold') || m.errorType?.toLowerCase().includes('italic')).length})` },
+                { id: 'Punctuation', label: `⸲ Punctuation (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('punctuation')).length})` },
                 { id: 'Spacing', label: `␣ Spacing (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('spacing')).length})` },
-                { id: 'Color Mismatch', label: `🎨 Color (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('color')).length})` },
+                { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('format') || m.errorType?.toLowerCase().includes('bold') || m.errorType?.toLowerCase().includes('italic')).length})` },
               ].map((f) => (
                 <button
                   key={f.id}
@@ -2346,18 +2348,24 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                       <td className="py-3 px-3">
                         <span
                           className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-extrabold border ${
-                            item.errorType === 'Missing Word' || item.isMissingWord
+                            item.errorType?.toLowerCase().includes('color')
+                              ? 'bg-amber-100 text-amber-900 border-amber-300'
+                              : item.errorType?.toLowerCase().includes('number')
+                              ? 'bg-cyan-100 text-cyan-900 border-cyan-300'
+                              : item.errorType === 'Missing Word' || item.isMissingWord || item.errorType?.toLowerCase().includes('missing')
                               ? 'bg-rose-100 text-rose-800 border-rose-300'
-                              : item.errorType === 'Extra Word' || item.isExtraWord
-                              ? 'bg-amber-100 text-amber-800 border-amber-300'
-                              : item.errorType?.includes('Spelling') || item.errorType === 'Word Mismatch'
-                              ? 'bg-purple-100 text-purple-800 border-purple-300'
-                              : item.errorType === 'Punctuation'
+                              : item.errorType === 'Extra Word' || item.isExtraWord || item.errorType?.toLowerCase().includes('extra')
+                              ? 'bg-yellow-100 text-yellow-900 border-yellow-300'
+                              : item.errorType?.toLowerCase().includes('spelling') || item.errorType?.toLowerCase().includes('word')
+                              ? 'bg-purple-100 text-purple-900 border-purple-300'
+                              : item.errorType?.toLowerCase().includes('punctuation')
                               ? 'bg-pink-100 text-pink-800 border-pink-300'
-                              : item.errorType === 'Capitalization'
+                              : item.errorType?.toLowerCase().includes('capitalization') || item.errorType?.toLowerCase().includes('case')
                               ? 'bg-blue-100 text-blue-800 border-blue-300'
-                              : item.errorType?.includes('Formatting')
+                              : item.errorType?.toLowerCase().includes('format') || item.errorType?.toLowerCase().includes('bold') || item.errorType?.toLowerCase().includes('italic')
                               ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                              : item.errorType?.toLowerCase().includes('space')
+                              ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                               : 'bg-slate-100 text-slate-800 border-slate-300'
                           }`}
                         >
@@ -2414,14 +2422,15 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
             <span className="text-xs font-semibold text-slate-500">Filter category:</span>
             {[
               { id: 'all', label: `All Discrepancies (${errorSummary.total})` },
+              ...((errorSummary.color || errorSummary.colorMismatches) ? [{ id: 'Color Mismatch', label: `🎨 Color (${errorSummary.color || errorSummary.colorMismatches})` }] : []),
+              { id: 'Numbers & Units', label: `🔢 Numbers (${errorSummary.numbers})` },
+              { id: 'Word Mismatch', label: `📝 Content (${errorSummary.words})` },
+              ...(errorSummary.missingWords ? [{ id: 'Missing Word', label: `⚠ Missing (${errorSummary.missingWords})` }] : []),
+              ...(errorSummary.extraWords ? [{ id: 'Extra Word', label: `+ Extra (${errorSummary.extraWords})` }] : []),
               { id: 'Capitalization', label: `🔤 Case (${errorSummary.capitalization})` },
               { id: 'Spacing', label: `␣ Spacing (${errorSummary.spacing})` },
               { id: 'Punctuation', label: `⸲ Punctuation (${errorSummary.punctuation})` },
-              { id: 'Numbers & Units', label: `🔢 Numbers (${errorSummary.numbers})` },
-              { id: 'Symbols & Trademarks', label: `🔣 Symbols (${errorSummary.symbols})` },
               { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${errorSummary.formatting || 0})` },
-              ...(errorSummary.color ? [{ id: 'Color Mismatch', label: `🎨 Color (${errorSummary.color})` }] : []),
-              { id: 'Word Mismatch', label: `📝 Content (${errorSummary.words})` },
             ].map((cat) => (
               <button
                 key={cat.id}
@@ -2438,7 +2447,15 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
           </div>
 
           {/* List of discrepancies */}
-          {proofreadingErrors.filter((e) => proofCategoryFilter === 'all' || e.category === proofCategoryFilter).length === 0 ? (
+          {proofreadingErrors.filter((e) => {
+            if (proofCategoryFilter === 'all') return true;
+            if (proofCategoryFilter === 'Color Mismatch') return e.category.includes('Color');
+            if (proofCategoryFilter === 'Numbers & Units') return e.category.includes('Number');
+            if (proofCategoryFilter === 'Word Mismatch') return e.category.includes('Word') || e.category.includes('Spelling');
+            if (proofCategoryFilter === 'Missing Word') return e.category.includes('Missing');
+            if (proofCategoryFilter === 'Extra Word') return e.category.includes('Extra');
+            return e.category === proofCategoryFilter;
+          }).length === 0 ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-slate-500">
               <CheckCircle2 className="h-8 w-8 text-emerald-500 mx-auto mb-2" />
               <p className="font-bold text-slate-800">No discrepancies found under this filter.</p>

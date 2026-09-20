@@ -116,30 +116,42 @@ export async function extractDocumentText(filename, buffer) {
 function getColorCategory(color) {
   if (!color || !Array.isArray(color) || color.length < 3) return 'black';
   const [r, g, b] = color;
-  // If all channels are low and close to each other, it's black/dark neutral
+
+  // 1. Black / dark neutral: low intensity and low channel spread
   if (r < 65 && g < 65 && b < 65 && Math.abs(r - g) < 25 && Math.abs(g - b) < 25) {
     return 'black';
   }
-  // Purple / violet headings (e.g. APRETUDE headers: r ~ 110, b ~ 160, g < 75)
-  if (r > 70 && b > 85 && (r + b) > g * 2.2) {
+
+  // 2. Neutral gray: all three channels close to each other (monochrome/grayscale body text)
+  if (Math.abs(r - g) < 25 && Math.abs(g - b) < 25 && Math.abs(r - b) < 25) {
+    return 'gray';
+  }
+
+  // 3. Orange headings (e.g. r: 247, g: 150, b: 70 - red dominates, green medium, blue low)
+  if (r > 140 && g > 50 && g < 190 && b < 120 && r > g * 1.15 && r > b * 1.4) {
+    return 'orange';
+  }
+
+  // 4. Purple / violet headings (e.g. APRETUDE headers: r ~ 91, b ~ 100, g ~ 33 - red & blue high, green suppressed)
+  if ((r > 50 && b > 60 && (r + b) > g * 2.2 && Math.abs(r - b) < 80) || (r > 70 && b > 70 && g < 60)) {
     return 'purple';
   }
-  // If red channel dominates (crimson/red headings)
+
+  // 5. Red channel dominates (crimson/red headings)
   if (r > 120 && r > g * 1.5 && r > b * 1.5) {
     return 'red';
   }
-  // If blue channel dominates (hyperlink blue)
-  if (b > 120 && b > r * 1.3) {
+
+  // 6. Blue channel dominates (hyperlink blue)
+  if (b > 120 && b > r * 1.3 && b > g * 1.3) {
     return 'blue';
   }
-  // If green dominates
+
+  // 7. Green dominates
   if (g > 120 && g > r * 1.3 && g > b * 1.3) {
     return 'green';
   }
-  // Neutral gray
-  if (Math.abs(r - g) < 20 && Math.abs(g - b) < 20) {
-    return 'gray';
-  }
+
   return `rgb(${r},${g},${b})`;
 }
 
@@ -413,25 +425,62 @@ async function extractPdfText(buffer) {
         let matchedColor = [0, 0, 0];
         if (s.length > 0 && textOps.length > 0) {
           let matchedOpIdx = -1;
-          for (let k = opCursor; k < Math.min(textOps.length, opCursor + 6); k++) {
-            const op = textOps[k];
-            if (op.str === s || op.str.includes(s) || s.includes(op.str)) {
-              matchedColor = op.color;
+          // 1. Exact match near opCursor
+          for (let k = opCursor; k < Math.min(textOps.length, opCursor + 8); k++) {
+            if (textOps[k].str === s) {
               matchedOpIdx = k;
               break;
+            }
+          }
+          // 2. Exact match anywhere ahead of opCursor
+          if (matchedOpIdx === -1) {
+            for (let k = opCursor; k < textOps.length; k++) {
+              if (textOps[k].str === s) {
+                matchedOpIdx = k;
+                break;
+              }
+            }
+          }
+          // 3. Exact match anywhere in page
+          if (matchedOpIdx === -1) {
+            for (let k = 0; k < textOps.length; k++) {
+              if (textOps[k].str === s) {
+                matchedOpIdx = k;
+                break;
+              }
+            }
+          }
+          // 4. Prefix match (where s starts with op.str or op.str starts with s)
+          if (matchedOpIdx === -1) {
+            for (let k = opCursor; k < Math.min(textOps.length, opCursor + 8); k++) {
+              const op = textOps[k];
+              if ((op.str.length >= 5 && s.startsWith(op.str)) || (s.length >= 5 && op.str.startsWith(s))) {
+                matchedOpIdx = k;
+                break;
+              }
             }
           }
           if (matchedOpIdx === -1) {
             for (let k = 0; k < textOps.length; k++) {
               const op = textOps[k];
-              if (op.str === s || op.str.includes(s) || s.includes(op.str)) {
-                matchedColor = op.color;
+              if ((op.str.length >= 5 && s.startsWith(op.str)) || (s.length >= 5 && op.str.startsWith(s))) {
+                matchedOpIdx = k;
+                break;
+              }
+            }
+          }
+          // 5. Substring match
+          if (matchedOpIdx === -1) {
+            for (let k = 0; k < textOps.length; k++) {
+              const op = textOps[k];
+              if (op.str.includes(s) || (s.includes(op.str) && op.str.length >= s.length * 0.75)) {
                 matchedOpIdx = k;
                 break;
               }
             }
           }
           if (matchedOpIdx !== -1) {
+            matchedColor = textOps[matchedOpIdx].color;
             opCursor = matchedOpIdx + 1;
           }
         }

@@ -54,6 +54,92 @@ function toUint8Array(dataUrlOrBase64) {
   }
 }
 
+function levenshteinDist(a, b) {
+  const m = a.length, n = b.length;
+  const d = [];
+  for (let i = 0; i <= m; i++) d[i] = [i];
+  for (let j = 0; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      d[i][j] = a[i - 1] === b[j - 1] ? d[i - 1][j - 1] : Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + 1);
+    }
+  }
+  return d[m][n];
+}
+
+const STOP_WORDS_SET = new Set(['to', 'if', 'is', 'the', 'at', 'or', 'of', 'in', 'it', 'on', 'as', 'by', 'an', 'be', 'for', 'up', 'due', 'and', 'all', 'use', 'we', 'he', 'so', 'do']);
+
+function isOcrWordMatch(normA, normB) {
+  if (!normA || !normB) return false;
+  if (normA === normB) return true;
+
+  const negationWords = new Set(['no', 'not', 'none', 'never', 'without']);
+  if (negationWords.has(normA) !== negationWords.has(normB)) return false;
+
+  const negationPrefixes = ['contra', 'non', 'anti', 'dis', 'un'];
+  for (const p of negationPrefixes) {
+    if ((normA.startsWith(p) && !normB.startsWith(p)) || (normB.startsWith(p) && !normA.startsWith(p))) {
+      return false;
+    }
+  }
+
+  if (/^\d+$/.test(normA) || /^\d+$/.test(normB)) {
+    if (normA === 'to' && /^(?:10|0|o|lo|te)$/i.test(normB)) return true;
+    return false;
+  }
+
+  if (STOP_WORDS_SET.has(normA)) {
+    if (normA === 'to' && /^(?:10|0|o|lo|te)$/i.test(normB)) return true;
+    if (normA === 'if' && /^(?:ff|f|ti)$/i.test(normB)) return true;
+    if (normA === 'is' && /^(?:i|ts|s|ia)$/i.test(normB)) return true;
+    if (normA === 'the' && /^(?:th|ha|te|tho)$/i.test(normB)) return true;
+    if (normA === 'at' && /^(?:a|et)$/i.test(normB)) return true;
+    if (normA === 'up' && /^(?:p|u|ub)$/i.test(normB)) return true;
+    if (normA === 'due' && /^(?:de|du|ue|dve)$/i.test(normB)) return true;
+    if (normA === 'and' && /^(?:nd|amd|ane|an)$/i.test(normB)) return true;
+    if ((normA === 'or' && normB === 'of') || (normA === 'of' && normB === 'or')) return true;
+    if (levenshteinDist(normA, normB) <= 1) return true;
+  }
+
+  if (normA.length === 2 && normB.length === 1 && normA.includes(normB)) return true;
+  if (normA.length === 1 && normB.length === 2 && normB.includes(normA)) return true;
+
+  if (normA.length <= 2 && normB.length <= 2) return normA === normB;
+
+  if (normA.length === 3 || normB.length === 3) {
+    if (Math.abs(normA.length - normB.length) <= 1 && levenshteinDist(normA, normB) <= 1) return true;
+  }
+
+  // HIV and HIV-1 equivalence (medical acronyms)
+  if ((normA === 'hiv1' && normB === 'hiv') || (normA === 'hiv' && normB === 'hiv1')) return true;
+
+  // Negation words
+  if ((normA === 'no' || normB === 'no') && normA !== normB) return false;
+  if (normA === 'not') {
+    if (/^(?:nol|ot|nt|no)$/i.test(normB)) return true;
+  }
+
+  // Length 4-5 words (e.g. 'with' vs 'wih', 'from' vs 'fom', 'sleep' vs 'sloop', 'safer' vs 'sar', 'while' vs 'whi')
+  if (normA.length <= 5 && normB.length <= 5) {
+    if (levenshteinDist(normA, normB) <= 2) return true;
+  }
+
+  // Length >= 6 words (e.g. 'adverse' vs 'acvarso', 'adherence' vs 'acharanca', 'appetite' vs 'appa')
+  if (normA.length >= 6 && normB.length >= 3) {
+    if (normA.startsWith(normB) && normB.length >= 4) return true;
+    if (normB.startsWith(normA) && normA.length >= 4) return true;
+    const maxLen = Math.max(normA.length, normB.length);
+    const dist = levenshteinDist(normA, normB);
+    if (maxLen >= 10 && dist <= 4) return true;
+    if (maxLen >= 7 && dist <= 3) return true;
+    if (maxLen >= 6 && dist <= 2) return true;
+    const similarity = (maxLen - dist) / maxLen;
+    if (similarity >= 0.50) return true;
+  }
+
+  return false;
+}
+
 /**
  * Maps proofreading discrepancies to exact CSS bounding boxes on the PDF canvas page
  */
@@ -127,13 +213,15 @@ function computePageHighlights(
         h: Math.max(12, Math.round(Math.abs(rect[3] - rect[1]) / dpr)),
       };
 
-      // User Requirement: Check words/sentences only! Leave color, bold, italic, and formatting alone.
+      // User Requirement: Check words/sentences only, plus color mismatches if colors differ
       const realWordErrors = (lr.wordErrors || []).filter(
         (we) =>
           we.type === 'number' ||
           we.type === 'word_changed' ||
           we.type === 'extra_word' ||
-          we.type === 'missing_word'
+          we.type === 'missing_word' ||
+          we.type === 'color' ||
+          we.type === 'color_mismatch'
       );
       const isMatch = lr.color === 'green' && realWordErrors.length === 0;
       const hasWordErrors = realWordErrors.length > 0;
@@ -168,7 +256,7 @@ function computePageHighlights(
           color: 'rgba(34, 197, 94, 0.20)',
           borderColor: '#22c55e',
           comment: lr.comment || 'Line match with discrepancies',
-          category: 'Approved ISI Line',
+          category: lr.status === 'color_mismatch' ? 'Color Mismatch' : 'Approved ISI Line',
           severity: 'medium',
           expected: lr.expected || lr.text,
           found: lr.found || lr.text,
@@ -178,9 +266,15 @@ function computePageHighlights(
         realWordErrors.forEach((we, wIdx) => {
           const weWord = we.word || we.clean;
           if (!weWord) return;
-          const cleanWe = weWord.toLowerCase().replace(/[^\w]/g, '');
-          const cleanExp = (we.expected || '').toLowerCase().replace(/[^\w]/g, '');
-          if (cleanWe && cleanExp && cleanWe === cleanExp) return;
+          const isColorType = we.type === 'color' || we.type === 'color_mismatch';
+          const cleanWe = weWord.toLowerCase().replace(/[^a-z0-9]/g, '');
+          const cleanExp = (we.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!isColorType && cleanWe && cleanExp) {
+            if (cleanWe === cleanExp || isOcrWordMatch(cleanExp, cleanWe)) return;
+            const digitsA = (we.expected || '').match(/\d+(?:\.\d+)?/g)?.join('') || '';
+            const digitsB = weWord.match(/\d+(?:\.\d+)?/g)?.join('') || '';
+            if (digitsA && digitsB && digitsA === digitsB && (cleanExp.includes(cleanWe) || cleanWe.includes(cleanExp))) return;
+          }
           const idxInLine = lr.text.toLowerCase().indexOf(weWord.toLowerCase());
           const charW = cssBox.w / (lr.text.length || 1);
           const wordX = idxInLine >= 0 ? Math.round(cssBox.x + idxInLine * charW) : cssBox.x;
@@ -193,19 +287,25 @@ function computePageHighlights(
           };
 
           const errCategory =
-            we.type === 'spelling'
+            we.type === 'color' || we.type === 'color_mismatch'
+              ? 'Color Mismatch'
+              : we.type === 'number'
+              ? 'Number Mismatch'
+              : we.type === 'missing_word'
+              ? 'Missing Word'
+              : we.type === 'extra_word'
+              ? 'Extra Word'
+              : we.type === 'spelling'
               ? 'Spelling Mistake'
               : we.type === 'spacing'
               ? 'Spacing Difference'
               : we.type === 'formatting'
               ? 'Bold / Italic Formatting'
-              : we.type === 'color' || we.type === 'color_mismatch'
-              ? 'Color Mismatch'
               : we.type === 'capitalization'
               ? 'Capitalization Difference'
               : we.type === 'punctuation_missing' || we.type === 'punctuation'
               ? 'Punctuation Difference'
-              : 'Word Discrepancy';
+              : 'Word Mistake';
 
           directHighlights.push({
             id: `isi_box_word_${lr.lineNum || lr.lineIndex || idx}_${wIdx}`,
@@ -216,11 +316,11 @@ function computePageHighlights(
             isMatch: false,
             isError: true,
             isWordDiscrepancy: true,
-            color: 'rgba(239, 68, 68, 0.50)',
-            borderColor: '#dc2626',
+            color: isColorType ? 'rgba(245, 158, 11, 0.35)' : 'rgba(239, 68, 68, 0.50)',
+            borderColor: isColorType ? '#d97706' : '#dc2626',
             comment: we.issue || 'Discrepancy',
             category: errCategory,
-            severity: 'high',
+            severity: isColorType ? 'medium' : 'high',
             expected: we.expected,
             found: weWord,
             details: we.issue,
@@ -385,13 +485,15 @@ function computePageHighlights(
         const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
         const safeLineBox = { ...pl.box, h: safeLineH };
 
-        // User Requirement: Check words/sentences only! Leave color, bold, italic, and formatting alone.
+        // User Requirement: Check words/sentences only, plus color mismatches if colors differ
         const realWordErrors = (matchedLr.wordErrors || []).filter(
           (we) =>
             we.type === 'number' ||
             we.type === 'word_changed' ||
             we.type === 'extra_word' ||
-            we.type === 'missing_word'
+            we.type === 'missing_word' ||
+            we.type === 'color' ||
+            we.type === 'color_mismatch'
         );
         const hasWordErrors = realWordErrors.length > 0;
         const isMatch = matchedLr.color === 'green' && !hasWordErrors;
@@ -445,8 +547,8 @@ function computePageHighlights(
             isMatch: true,
             isError: false,
             color: 'green',
-            category: 'Verified Line with Discrepancy',
-            details: 'Line matched sequence with localized word discrepancy',
+            category: matchedLr.status === 'color_mismatch' ? 'Color Mismatch' : 'Verified Line with Discrepancy',
+            details: matchedLr.status === 'color_mismatch' ? matchedLr.comment : 'Line matched sequence with localized word discrepancy',
             comment: matchedLr.comment,
             expected: matchedLr.expected || pl.text,
             found: pl.text,
@@ -460,15 +562,21 @@ function computePageHighlights(
             if (!weWord) return;
 
             let wordBox = null;
-            const cleanWeWord = weWord.toLowerCase().replace(/[^\w]/g, '');
-            const cleanExpWord = (we.expected || '').toLowerCase().replace(/[^\w]/g, '');
-            if (cleanWeWord && cleanExpWord && cleanWeWord === cleanExpWord) return;
+            const isColorType = we.type === 'color' || we.type === 'color_mismatch';
+            const cleanWeWord = weWord.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const cleanExpWord = (we.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!isColorType && cleanWeWord && cleanExpWord) {
+              if (cleanWeWord === cleanExpWord || isOcrWordMatch(cleanExpWord, cleanWeWord)) return;
+              const digitsA = (we.expected || '').match(/\d+(?:\.\d+)?/g)?.join('') || '';
+              const digitsB = weWord.match(/\d+(?:\.\d+)?/g)?.join('') || '';
+              if (digitsA && digitsB && digitsA === digitsB && (cleanExpWord.includes(cleanWeWord) || cleanWeWord.includes(cleanExpWord))) return;
+            }
 
             if (pl.lineItems && pl.lineItems.length > 0) {
               for (const item of pl.lineItems) {
                 const itemStr = (item.str || '').trim();
-                const cleanItemStr = itemStr.toLowerCase().replace(/[^\w]/g, '');
-                if (cleanItemStr && cleanExpWord && cleanItemStr === cleanExpWord) return;
+                const cleanItemStr = itemStr.toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (!isColorType && cleanItemStr && cleanExpWord && (cleanItemStr === cleanExpWord || isOcrWordMatch(cleanExpWord, cleanItemStr))) return;
 
                 if (itemStr.toLowerCase() === weWord.toLowerCase() || (cleanWeWord && cleanItemStr === cleanWeWord)) {
                   wordBox = {
@@ -509,19 +617,25 @@ function computePageHighlights(
 
             if (wordBox) {
               const errCategory =
-                we.type === 'spelling'
+                we.type === 'color' || we.type === 'color_mismatch'
+                  ? 'Color Mismatch'
+                  : we.type === 'number'
+                  ? 'Number Mismatch'
+                  : we.type === 'missing_word'
+                  ? 'Missing Word'
+                  : we.type === 'extra_word'
+                  ? 'Extra Word'
+                  : we.type === 'spelling'
                   ? 'Spelling Mistake'
                   : we.type === 'spacing'
                   ? 'Spacing Difference'
                   : we.type === 'formatting'
                   ? 'Bold / Italic Formatting'
-                  : we.type === 'color' || we.type === 'color_mismatch'
-                  ? 'Color Mismatch'
                   : we.type === 'capitalization'
                   ? 'Capitalization Difference'
                   : we.type === 'punctuation_missing' || we.type === 'punctuation'
                   ? 'Punctuation Difference'
-                  : 'Word Discrepancy';
+                  : 'Word Mistake';
 
               highlights.push({
                 id: `word_err_${pIdx}_${wIdx}`,
@@ -531,9 +645,11 @@ function computePageHighlights(
                 boxes: [wordBox],
                 isMatch: false,
                 isError: true,
-                color: 'red',
+                color: isColorType ? 'rgba(245, 158, 11, 0.35)' : 'red',
+                borderColor: isColorType ? '#d97706' : '#dc2626',
                 isWordDiscrepancy: true,
                 category: errCategory,
+                severity: isColorType ? 'medium' : 'high',
                 details: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
                 comment: we.issue || `Discrepancy: "${weWord}" (expected "${we.expected}")`,
                 expected: we.expected || '(correct text)',
