@@ -228,13 +228,12 @@ function computePageHighlights(
         h: Math.max(12, Math.round(Math.abs(rect[3] - rect[1]) / dpr)),
       };
 
-      // User Requirement: Check words/sentences only, plus color mismatches if colors differ
+      // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, changed words, color mismatches) in red/amber!
       const realWordErrors = (lr.wordErrors || []).filter(
         (we) =>
           we.type === 'number' ||
           we.type === 'word_changed' ||
           we.type === 'extra_word' ||
-          we.type === 'missing_word' ||
           we.type === 'color' ||
           we.type === 'color_mismatch'
       );
@@ -261,7 +260,26 @@ function computePageHighlights(
           lineResult: lr,
         });
       } else if (hasWordErrors) {
-        // User Requirement: Do NOT mark the whole line! ONLY mark the specific word discrepancies / color mismatches!
+        // User Requirement: Render matching line in green, and highlight ONLY the specific word discrepancy in red/amber!
+        directHighlights.push({
+          id: `isi_box_match_${lr.lineNum || lr.lineIndex || idx}`,
+          index: lr.lineNum || lr.lineIndex || idx,
+          target: lr.text,
+          box: cssBox,
+          boxes: [cssBox],
+          isMatch: true,
+          isError: false,
+          color: 'rgba(34, 197, 94, 0.18)',
+          borderColor: '#16a34a',
+          comment: 'Approved Section: Matched approved reference master',
+          category: 'Approved Match',
+          severity: 'low',
+          expected: lr.expected || lr.text,
+          found: lr.found || lr.text,
+          details: 'Complete match with approved reference master',
+          lineResult: lr,
+        });
+
         realWordErrors.forEach((we, wIdx) => {
           const weWord = we.word || we.clean;
           if (!weWord) return;
@@ -274,9 +292,22 @@ function computePageHighlights(
             const digitsB = weWord.match(/\d+(?:\.\d+)?/g)?.join('') || '';
             if (digitsA && digitsB && digitsA === digitsB && (cleanExp.includes(cleanWe) || cleanWe.includes(cleanExp))) return;
           }
-          const idxInLine = lr.text.toLowerCase().indexOf(weWord.toLowerCase());
+
+          // Use whole-word regex matching so short tokens like "ted" don't match inside "limited"
+          let idxInLine = -1;
+          try {
+            const escapedWord = weWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(lr.text);
+            idxInLine = wordMatch ? wordMatch.index : lr.text.toLowerCase().indexOf(weWord.toLowerCase());
+          } catch (_) {
+            idxInLine = lr.text.toLowerCase().indexOf(weWord.toLowerCase());
+          }
+
+          // If the word does not exist in this line (e.g. missing word), skip drawing a box to avoid misplacing over correct words
+          if (idxInLine < 0) return;
+
           const charW = cssBox.w / (lr.text.length || 1);
-          const wordX = idxInLine >= 0 ? Math.round(cssBox.x + idxInLine * charW) : cssBox.x;
+          const wordX = Math.round(cssBox.x + idxInLine * charW);
           const wordW = Math.max(14, Math.round((weWord.length || 3) * charW));
           const wordBox = {
             x: wordX,
@@ -500,13 +531,12 @@ function computePageHighlights(
         const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
         const safeLineBox = { ...pl.box, h: safeLineH };
 
-        // User Requirement: Check words/sentences only, plus color mismatches if colors differ
+        // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, changed words, color mismatches) in red/amber!
         const realWordErrors = (matchedLr.wordErrors || []).filter(
           (we) =>
             we.type === 'number' ||
             we.type === 'word_changed' ||
             we.type === 'extra_word' ||
-            we.type === 'missing_word' ||
             we.type === 'color' ||
             we.type === 'color_mismatch'
         );
@@ -515,9 +545,9 @@ function computePageHighlights(
         const isLineMatch = matchedLr.color === 'green';
 
         // Base line highlight:
-        // - Complete match -> Leave completely unmarked per user requirement ("dont hight if everthuing is oky")
+        // - Complete match -> Green line highlight
+        // - Lines with word errors -> Render matching line in green, and highlight ONLY the specific word discrepancy in red/amber below!
         // - Mismatches / extra lines -> RED box
-        // - Lines with word errors -> Do NOT mark the whole line; only mark the specific localized word errors below
         if (isMatch) {
           highlights.push({
             id: `isi_line_match_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
@@ -556,7 +586,24 @@ function computePageHighlights(
             isMissingLine: matchedLr.status === 'missing_line',
           });
         } else if (hasWordErrors) {
-          // User Requirement: Do NOT mark the entire line with a green/red box! Only mark the specific localized word errors below.
+          highlights.push({
+            id: `isi_line_match_${matchedLr.lineNum || matchedLr.lineIndex || pIdx}`,
+            index: matchedLr.lineNum || matchedLr.lineIndex || pIdx,
+            target: pl.text,
+            box: safeLineBox,
+            boxes: [safeLineBox],
+            isMatch: true,
+            isError: false,
+            color: 'rgba(34, 197, 94, 0.18)',
+            borderColor: '#16a34a',
+            comment: 'Approved Section: Matched approved reference master',
+            category: 'Approved Match',
+            severity: 'low',
+            expected: matchedLr.expected || pl.text,
+            found: pl.text,
+            details: 'Complete match with approved reference master',
+            lineResult: matchedLr,
+          });
         }
 
         // Word error localized highlights inside this visual line
@@ -607,7 +654,15 @@ function computePageHighlights(
             }
 
             if (!wordBox) {
-              const idxInLine = pl.text.toLowerCase().indexOf(weWord.toLowerCase());
+              let idxInLine = -1;
+              try {
+                const escapedWord = weWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(pl.text);
+                idxInLine = wordMatch ? wordMatch.index : pl.text.toLowerCase().indexOf(weWord.toLowerCase());
+              } catch (_) {
+                idxInLine = pl.text.toLowerCase().indexOf(weWord.toLowerCase());
+              }
+
               if (idxInLine >= 0) {
                 const charW = safeLineBox.w / (pl.text.length || 1);
                 wordBox = {

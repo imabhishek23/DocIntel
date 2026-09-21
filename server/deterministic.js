@@ -1252,7 +1252,16 @@ export function extractCanonicalStatements(textA) {
   const rawLines = (textA || '')
     .split('\n')
     .map((l) => l.trim())
-    .filter((l) => l.length > 0 && !/^(?:For editorial QA|Page \d+ of \d+|IMMUNOVA \|)/i.test(l));
+    .filter((l) => {
+      if (!l) return false;
+      const clean = l.replace(/<[^>]+>/g, '').trim();
+      if (!clean) return false;
+      if (/^(?:For editorial QA|Page \d+ of \d+|IMMUNOVA \|)/i.test(clean)) return false;
+      if (/^(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}$/i.test(clean)) return false;
+      if (/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(clean)) return false;
+      if (/^Page\s+\d+(?:\s+of\s+\d+)?$/i.test(clean)) return false;
+      return true;
+    });
 
   const statements = [];
   let current = '';
@@ -1722,20 +1731,25 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     let bestScore = 0;
     let bestRawScore = 0;
 
-    // First, test if cCursor is already the continuous match (sequence continuity)
-    const compareLen = Math.min(bNorm.length, 6);
-    const subseqNorm = bNorm.slice(0, compareLen);
-    const ratioAtCursor = computeSubsequenceFuzzyScore(canonicalTokens, cCursor, subseqNorm);
-    if (ratioAtCursor >= 0.85) {
-      bestStart = cCursor;
-      bestScore = ratioAtCursor;
-      bestRawScore = ratioAtCursor;
+    if (pendingHyphenPrefix && pendingHyphenPrefix.refTokenIndex !== undefined && pendingHyphenPrefix.refTokenIndex >= 0) {
+      bestStart = pendingHyphenPrefix.refTokenIndex;
+      bestScore = 1;
+      bestRawScore = 1;
     } else {
-      if (ratioAtCursor >= 0.35 || (compareLen === 1 && ratioAtCursor > 0)) {
+      // First, test if cCursor is already the continuous match (sequence continuity)
+      const compareLen = Math.min(bNorm.length, 6);
+      const subseqNorm = bNorm.slice(0, compareLen);
+      const ratioAtCursor = computeSubsequenceFuzzyScore(canonicalTokens, cCursor, subseqNorm);
+      if (ratioAtCursor >= 0.85) {
         bestStart = cCursor;
         bestScore = ratioAtCursor;
         bestRawScore = ratioAtCursor;
-      }
+      } else {
+        if (ratioAtCursor >= 0.35 || (compareLen === 1 && ratioAtCursor > 0)) {
+          bestStart = cCursor;
+          bestScore = ratioAtCursor;
+          bestRawScore = ratioAtCursor;
+        }
       for (let searchPos = cCursor; searchPos < Math.min(canonicalTokens.length, cCursor + 120); searchPos++) {
         // Guard: short lines (<= 2 tokens) cannot jump far ahead without an exact match
         if (bNorm.length <= 2 && (searchPos - cCursor > 4)) {
@@ -1777,6 +1791,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         }
       }
     }
+  }
 
     if (bestStart === -1) {
       // Search globally in canonical tokens (handles document restarting ISI, desktop repeating mobile, or split layouts)
@@ -1854,6 +1869,11 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
       if (expectedCombined && (combined === expectedCombined || isOcrWordMatch(combined, expectedCombined))) {
         bIdx = 1;
+        if (pendingHyphenPrefix.refTokenIndex !== undefined && tokenCursor <= pendingHyphenPrefix.refTokenIndex) {
+          tokenCursor = pendingHyphenPrefix.refTokenIndex + 1;
+        } else if (tokenCursor < canonicalTokens.length && (stripAlphanum(canonicalTokens[tokenCursor].raw) === expectedCombined || isOcrWordMatch(stripAlphanum(canonicalTokens[tokenCursor].raw), expectedCombined))) {
+          tokenCursor++;
+        }
         if (pendingHyphenPrefix.lineResult && pendingHyphenPrefix.lineResult.wordErrors) {
           pendingHyphenPrefix.lineResult.wordErrors = pendingHyphenPrefix.lineResult.wordErrors.filter(
             (we) => we.word !== pendingHyphenPrefix.lastToken.raw && we.clean !== pendingHyphenPrefix.lastToken.clean
@@ -1909,7 +1929,9 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       const cleanB = (bt.clean || '').toLowerCase();
 
       // 1. Exact or clean word match (Check color mismatch on matched words/headings)
-      if (normA === normB || (cleanA && cleanA === cleanB)) {
+      const stripA = stripAlphanum(ct.raw);
+      const stripB = stripAlphanum(bt.raw);
+      if (normA === normB || (cleanA && cleanA === cleanB) || (stripA && stripA === stripB && stripA.length > 0)) {
         if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
           const expColorName = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard (black)' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard (black)');
           const foundColorName = (bt.colorCategory === 'black' || !bt.colorCategory ? 'standard (black)' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'different color');
@@ -1931,6 +1953,19 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         }
         bIdx++;
         tokenCursor++;
+        continue;
+      }
+
+      // Check if bt is the last token on line B and is a hyphenated prefix of ct (e.g. "pre-", "syndrom-", "Disconti-", "APRETU-")
+      const isLastTokenOnLine = bIdx === bTokens.length - 1;
+      if (isLastTokenOnLine && stripB && stripA.startsWith(stripB) && stripA !== stripB) {
+        pendingHyphenPrefix = {
+          lineResult: null,
+          lastToken: bt,
+          refToken: ct,
+          refTokenIndex: tokenCursor,
+        };
+        bIdx++;
         continue;
       }
 
@@ -1959,6 +1994,15 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         if (joinA2 === btClean || (Math.abs(joinA2.length - btClean.length) <= 1 && levenshteinDist(joinA2, btClean) <= 1)) {
           bIdx++;
           tokenCursor += 2;
+          continue;
+        }
+      }
+      if (tokenCursor + 2 < canonicalTokens.length) {
+        const joinA3 = stripAlphanum(ct.raw + canonicalTokens[tokenCursor + 1].raw + canonicalTokens[tokenCursor + 2].raw);
+        const btClean = stripAlphanum(bt.raw);
+        if (joinA3 === btClean || (Math.abs(joinA3.length - btClean.length) <= 1 && levenshteinDist(joinA3, btClean) <= 1)) {
+          bIdx++;
+          tokenCursor += 3;
           continue;
         }
       }
@@ -2106,14 +2150,13 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     const nextRefToken = canonicalTokens[tokenCursor - 1] || canonicalTokens[tokenCursor];
     const isPrefixOfRef = lastBToken && nextRefToken && stripAlphanum(nextRefToken.raw).startsWith(stripAlphanum(lastBToken.raw)) && stripAlphanum(nextRefToken.raw) !== stripAlphanum(lastBToken.raw);
 
-    if (isHyphenEnd || isPrefixOfRef) {
+    if (!pendingHyphenPrefix && (isHyphenEnd || isPrefixOfRef)) {
       pendingHyphenPrefix = {
         lineResult: null, // assigned below after push
         lastToken: lastBToken,
         refToken: nextRefToken,
+        refTokenIndex: canonicalTokens[tokenCursor - 1] ? tokenCursor - 1 : tokenCursor,
       };
-    } else {
-      pendingHyphenPrefix = null;
     }
 
     const targetLineText = linesA[currRefLine]?.clean || '';
