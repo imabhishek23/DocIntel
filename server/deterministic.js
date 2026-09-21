@@ -1801,16 +1801,17 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
         continue;
       }
     }
-    if (i > 0 && (j === 0 || dp[i - 1][j] >= dp[i][j - 1])) {
-      if (j > 0 && !isTokensEquivalent(cSlice[j - 1], bTokens[i - 1])) {
-        alignedPairs.unshift({ bt: bTokens[i - 1], ct: cSlice[j - 1], bIdx: i - 1, cIdx: j - 1, match: false });
-        i--;
-        j--;
-      } else {
-        alignedPairs.unshift({ bt: bTokens[i - 1], ct: null, bIdx: i - 1, cIdx: null, match: false });
-        i--;
-      }
+    // True 1-to-1 word substitution (neither token is part of an LCS match)
+    if (i > 0 && j > 0 && dp[i - 1][j - 1] === dp[i - 1][j] && dp[i - 1][j] === dp[i][j - 1] && dp[i][j] === dp[i - 1][j - 1]) {
+      alignedPairs.unshift({ bt: bTokens[i - 1], ct: cSlice[j - 1], bIdx: i - 1, cIdx: j - 1, match: false });
+      i--;
+      j--;
+    } else if (i > 0 && (j === 0 || dp[i - 1][j] >= dp[i][j - 1])) {
+      // bTokens[i - 1] is an extra or unaligned token in B
+      alignedPairs.unshift({ bt: bTokens[i - 1], ct: null, bIdx: i - 1, cIdx: null, match: false });
+      i--;
     } else if (j > 0) {
+      // cSlice[j - 1] is missing in B
       alignedPairs.unshift({ bt: null, ct: cSlice[j - 1], bIdx: null, cIdx: j - 1, match: false });
       j--;
     }
@@ -1825,50 +1826,19 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
     if (!bt) continue;
 
     if (pair.match) {
-      // User Requirement 3 & 4: Independent formatting check on verified matching text
       if (ct) {
-        // 1. Check bold / italic / underline styling
-        const isBoldA = !!ct.isBold;
-        const isBoldB = !!bt.isBold;
-        const isItalicA = !!ct.isItalic;
-        const isItalicB = !!bt.isItalic;
-        const isUnderlineA = !!ct.isUnderline;
-        const isUnderlineB = !!bt.isUnderline;
-
-        if (isBoldA !== isBoldB || isItalicA !== isItalicB || isUnderlineA !== isUnderlineB) {
-          const expStyle = getStyleLabel(isBoldA, isItalicA, isUnderlineA);
-          const foundStyle = getStyleLabel(isBoldB, isItalicB, isUnderlineB);
-          const issueMsg = `Expected ${expStyle} text; found ${foundStyle}.`;
-          formattingErrors.push({
+        const rawA = (ct.raw || '').replace(/[^a-zA-Z0-9]/g, '');
+        const rawB = (bt.raw || '').replace(/[^a-zA-Z0-9]/g, '');
+        if (rawA && rawB && rawA !== rawB && rawA.toLowerCase() === rawB.toLowerCase()) {
+          // User directive: "if somethig noty match means any content error ,. -caps small these things mark"
+          const issueMsg = `Capitalization Difference: Found "${bt.raw}", expected "${ct.raw}"`;
+          issues.push(issueMsg);
+          wordErrors.push({
             word: bt.raw,
             clean: bt.clean,
-            expected: expStyle,
-            found: foundStyle,
+            expected: ct.raw,
             issue: issueMsg,
-            details: issueMsg,
-            type: 'style_mismatch',
-            category: isUnderlineA !== isUnderlineB ? 'Formatting (Underline)' : 'Formatting (Bold / Italic)',
-            bStartIdx: bIdx,
-            bEndIdx: bIdx + 1,
-          });
-        }
-
-        // 2. Check font color
-        if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
-          const expColor = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard');
-          const foundColor = (bt.colorCategory === 'black' || !bt.colorCategory ? 'black' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'custom color');
-          const issueMsg = `Expected ${expColor} text; found ${foundColor}.`;
-          formattingErrors.push({
-            word: bt.raw,
-            clean: bt.clean,
-            expected: expColor,
-            found: foundColor,
-            expectedColorName: expColor,
-            foundColorName: foundColor,
-            issue: issueMsg,
-            details: issueMsg,
-            type: 'color_mismatch',
-            category: 'Formatting (Color)',
+            type: 'capitalization',
             bStartIdx: bIdx,
             bEndIdx: bIdx + 1,
           });
@@ -1877,27 +1847,52 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
       continue;
     }
 
-    if (ct && hasDifferentNumbers(ct, bt)) {
-      const issueMsg = `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
-      issues.push(issueMsg);
-      wordErrors.push({
-        word: bt.raw,
-        clean: bt.clean,
-        expected: ct.raw,
-        issue: issueMsg,
-        type: 'number',
-        bStartIdx: bIdx,
-        bEndIdx: bIdx + 1,
-      });
+    if (ct && isTokensEquivalent(ct, bt) && !hasDifferentNumbers(ct, bt)) {
       continue;
     }
 
-    const stripB = stripAlphanum(bt.raw);
     const cleanB = (bt.clean || '').toLowerCase();
+    const stripB = stripAlphanum(bt.raw);
 
-    // If there is an expected token ct, this is a real word substitution (e.g. "has" vs "have")!
-    // NEVER ignore substitutions just because cleanB is in STOP_WORDS!
     if (ct) {
+      const cleanA = (ct.clean || '').toLowerCase();
+      const stripA = stripAlphanum(ct.raw);
+
+      if (cleanB === cleanA || stripB === stripA || isOcrWordMatch(cleanA, cleanB)) {
+        continue;
+      }
+
+      if (hasDifferentNumbers(ct, bt)) {
+        const issueMsg = `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
+        issues.push(issueMsg);
+        wordErrors.push({
+          word: bt.raw,
+          clean: bt.clean,
+          expected: ct.raw,
+          issue: issueMsg,
+          type: 'number',
+          bStartIdx: bIdx,
+          bEndIdx: bIdx + 1,
+        });
+        continue;
+      }
+
+      if (stripB.toLowerCase() === stripA.toLowerCase()) {
+        const issueMsg = `Capitalization Difference: Found "${bt.raw}", expected "${ct.raw}"`;
+        issues.push(issueMsg);
+        wordErrors.push({
+          word: bt.raw,
+          clean: bt.clean,
+          expected: ct.raw,
+          issue: issueMsg,
+          type: 'capitalization',
+          bStartIdx: bIdx,
+          bEndIdx: bIdx + 1,
+        });
+        continue;
+      }
+
+      // Real word substitution (e.g. "has" vs "have")
       const expText = ct.raw;
       const issueMsg = `Word Mistake: Found "${bt.raw}", expected "${ct.raw}"`;
       issues.push(issueMsg);
@@ -1919,6 +1914,9 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
     if (canonicalWordsSet.has(stripB)) {
       continue;
     }
+    if (!stripB || stripB.length <= 1) {
+      continue;
+    }
 
     const expText = '(none)';
     const issueMsg = `Extra Word: "${bt.raw}"`;
@@ -1934,13 +1932,11 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
     });
   }
 
-  const groupedFormattingErrors = groupConsecutiveFormattingErrors(formattingErrors);
-
   return {
     consumedCount: bestJ,
     issues,
     wordErrors,
-    formattingErrors: groupedFormattingErrors,
+    formattingErrors: [],
   };
 }
 
@@ -2374,10 +2370,6 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     // - Text that matches PDF A must always remain green, even if formatting (color, bold, italic, underline) differs.
     // - Red highlighting is reserved strictly for verified text discrepancies.
     if (wordErrors.length === 0) {
-      const lineComment = formattingErrors.length > 0
-        ? formattingErrors.map((fe) => fe.details).join('; ')
-        : 'Complete line match';
-
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
         lineNum: lIdx + 1,
@@ -2387,13 +2379,13 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         box: lineB.box || null,
         color: 'green',
         status: 'matched',
-        comment: lineComment,
+        comment: 'Complete line match',
         expected: cleanLine,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
         wordErrors: [],
-        formattingErrors,
-        hasFormattingErrors: formattingErrors.length > 0,
+        formattingErrors: [],
+        hasFormattingErrors: false,
       });
     } else {
       const groupedWordErrors = wordErrors;
@@ -2423,8 +2415,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         comment,
         issues: sortedIssues,
         wordErrors: groupedWordErrors,
-        formattingErrors,
-        hasFormattingErrors: formattingErrors.length > 0,
+        formattingErrors: [],
+        hasFormattingErrors: false,
         expected: isMajorityChanged ? '(none)' : targetLineText,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
@@ -2474,35 +2466,6 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
           expected: expDisplay,
           found: foundDisplay,
           details: we.issue || we.details || comment,
-        });
-      }
-    }
-
-    // Record formatting errors in mismatchReport and proofreadingErrors
-    if (formattingErrors.length > 0) {
-      for (let fIdx = 0; fIdx < formattingErrors.length; fIdx++) {
-        const fe = formattingErrors[fIdx];
-        mismatchReport.push({
-          index: mismatchReport.length + 1,
-          id: `line_format_${lIdx + 1}_f${fIdx + 1}`,
-          page: lineB.page || 1,
-          section: targetLineText.slice(0, 35) || 'Important Safety Information',
-          originalWordText: fe.expected,
-          pdfText: fe.found,
-          errorType: fe.category,
-          severity: 'medium',
-          details: fe.details,
-          isFormattingError: true,
-          lineNum: lIdx + 1,
-        });
-
-        proofreadingErrors.push({
-          id: `proof_format_${lIdx + 1}_f${fIdx + 1}`,
-          category: fe.category,
-          severity: 'medium',
-          expected: `${fe.expected}: "${fe.word}"`,
-          found: `${fe.found}: "${fe.word}"`,
-          details: fe.details,
         });
       }
     }

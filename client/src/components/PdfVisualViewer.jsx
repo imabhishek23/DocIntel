@@ -724,13 +724,23 @@ function computePageHighlights(
         const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
         const safeLineBox = { ...pl.box, h: safeLineH };
 
+        // Check if the current visual line pl itself is an exact text match with matchedLr.clean or matchedLr.expected
+        const isPlExactMatch =
+          pl.clean.length >= 6 &&
+          matchedLr.clean &&
+          (pl.clean === matchedLr.clean ||
+           (matchedLr.expected && pl.clean === matchedLr.expected.toLowerCase().replace(/[^a-z0-9]/g, '')) ||
+           isOcrWordMatch(pl.clean, matchedLr.clean));
+
         // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, real changed words) in red! Never mark color errors or approved master words!
-        const realWordErrors = (matchedLr.wordErrors || []).filter(
-          (we) => !isIgnoredWordError(we, matchedLr.expected)
-        );
+        const realWordErrors = isPlExactMatch
+          ? []
+          : (matchedLr.wordErrors || []).filter(
+              (we) => !isIgnoredWordError(we, matchedLr.expected)
+            );
         const hasWordErrors = realWordErrors.length > 0;
-        const isMatch = matchedLr.color === 'green' && !hasWordErrors;
-        const isLineMatch = matchedLr.color === 'green';
+        const isMatch = (matchedLr.color === 'green' || isPlExactMatch) && !hasWordErrors;
+        const isLineMatch = matchedLr.color === 'green' || isPlExactMatch;
 
         // Base line highlight:
         // - Complete match -> Green line highlight
@@ -827,31 +837,31 @@ function computePageHighlights(
                   break;
                 }
 
-                const idxInItem = itemStr.toLowerCase().indexOf(weWord.toLowerCase());
-                if (idxInItem >= 0) {
-                  const charW = item.w / (itemStr.length || 1);
-                  wordBox = {
-                    x: Math.round(item.x + idxInItem * charW - 1),
-                    y: Math.round(item.y - 1),
-                    w: Math.max(14, Math.round(weWord.length * charW + 2)),
-                    h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
-                  };
-                  break;
+                // Strictly whole-word boundary match inside multi-word item (NEVER match inside a larger word!)
+                if (itemStr.length > weWord.length) {
+                  const escapedWord = weWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  const boundaryRegex = new RegExp(`(?:^|[^a-zA-Z0-9])(${escapedWord})(?:$|[^a-zA-Z0-9])`, 'i');
+                  const match = boundaryRegex.exec(itemStr);
+                  if (match) {
+                    const matchOffset = match.index + (match[0].startsWith(match[1]) ? 0 : 1);
+                    const charW = item.w / (itemStr.length || 1);
+                    wordBox = {
+                      x: Math.round(item.x + matchOffset * charW - 1),
+                      y: Math.round(item.y - 1),
+                      w: Math.max(14, Math.round(weWord.length * charW + 2)),
+                      h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
+                    };
+                    break;
+                  }
                 }
               }
             }
 
             if (!wordBox) {
-              let idxInLine = -1;
-              try {
-                const escapedWord = weWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(pl.text);
-                idxInLine = wordMatch ? wordMatch.index : pl.text.toLowerCase().indexOf(weWord.toLowerCase());
-              } catch (_) {
-                idxInLine = pl.text.toLowerCase().indexOf(weWord.toLowerCase());
-              }
-
-              if (idxInLine >= 0) {
+              const escapedWord = weWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(pl.text);
+              if (wordMatch) {
+                const idxInLine = wordMatch.index;
                 const charW = safeLineBox.w / (pl.text.length || 1);
                 wordBox = {
                   x: Math.round(safeLineBox.x + idxInLine * charW - 1),
@@ -943,31 +953,30 @@ function computePageHighlights(
                   break;
                 }
 
-                const idxInItem = itemStr.toLowerCase().indexOf(feWord.toLowerCase());
-                if (idxInItem >= 0) {
-                  const charW = item.w / (itemStr.length || 1);
-                  wordBox = {
-                    x: Math.round(item.x + idxInItem * charW - 1),
-                    y: Math.round(item.y - 1),
-                    w: Math.max(14, Math.round(feWord.length * charW + 2)),
-                    h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
-                  };
-                  break;
+                if (itemStr.length > feWord.length) {
+                  const escapedWord = feWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                  const boundaryRegex = new RegExp(`(?:^|[^a-zA-Z0-9])(${escapedWord})(?:$|[^a-zA-Z0-9])`, 'i');
+                  const match = boundaryRegex.exec(itemStr);
+                  if (match) {
+                    const matchOffset = match.index + (match[0].startsWith(match[1]) ? 0 : 1);
+                    const charW = item.w / (itemStr.length || 1);
+                    wordBox = {
+                      x: Math.round(item.x + matchOffset * charW - 1),
+                      y: Math.round(item.y - 1),
+                      w: Math.max(14, Math.round(feWord.length * charW + 2)),
+                      h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
+                    };
+                    break;
+                  }
                 }
               }
             }
 
             if (!wordBox) {
-              let idxInLine = -1;
-              try {
-                const escapedWord = feWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(pl.text);
-                idxInLine = wordMatch ? wordMatch.index : pl.text.toLowerCase().indexOf(feWord.toLowerCase());
-              } catch (_) {
-                idxInLine = pl.text.toLowerCase().indexOf(feWord.toLowerCase());
-              }
-
-              if (idxInLine >= 0) {
+              const escapedWord = feWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(pl.text);
+              if (wordMatch) {
+                const idxInLine = wordMatch.index;
                 const charW = safeLineBox.w / (pl.text.length || 1);
                 wordBox = {
                   x: Math.round(safeLineBox.x + idxInLine * charW - 1),
@@ -2064,7 +2073,7 @@ export default function PdfVisualViewer({
                                     isFormatting
                                       ? isSelected
                                         ? 'opacity-100 bg-amber-600 ring-1 ring-white'
-                                        : 'opacity-95 group-hover:opacity-100 bg-amber-600 ring-1 ring-white shadow-xs'
+                                        : 'opacity-0 group-hover:opacity-100 bg-amber-600 ring-1 ring-white shadow-xs'
                                       : isSelected
                                       ? 'opacity-100 bg-rose-600 ring-1 ring-white'
                                       : hl.isMissingLine
