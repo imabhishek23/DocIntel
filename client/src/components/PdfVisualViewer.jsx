@@ -49,9 +49,36 @@ function toUint8Array(dataUrlOrBase64) {
     }
     return bytes;
   } catch (err) {
-    console.error('[toUint8Array] Base64 decoding failed:', err);
-    throw err;
+    console.error('Failed to convert base64 to Uint8Array:', err);
+    return null;
   }
+}
+
+const CLIENT_STOP_WORDS = new Set([
+  'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'aren',
+  'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by',
+  'can', 'cannot', 'could', 'did', 'do', 'does', 'doing', 'down', 'during', 'each', 'few', 'for',
+  'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him',
+  'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more',
+  'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other',
+  'ought', 'our', 'ours', 'ourselves', 'out', 'over', 'own', 'same', 'she', 'should', 'so', 'some',
+  'such', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these',
+  'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were',
+  'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'with', 'would', 'you', 'your', 'yours',
+]);
+
+function isIgnoredWordError(we, expectedText) {
+  if (!we || !we.word) return true;
+  if (we.type === 'color' || we.type === 'color_mismatch') return true;
+  const cleanWord = we.word.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!cleanWord) return true;
+  if (we.type !== 'number' && CLIENT_STOP_WORDS.has(cleanWord)) return true;
+  if (expectedText && we.type !== 'number') {
+    const cleanExpected = expectedText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+    const expWords = new Set(cleanExpected.split(/\s+/).filter(Boolean));
+    if (expWords.has(cleanWord)) return true;
+  }
+  return false;
 }
 
 function levenshteinDist(a, b) {
@@ -343,14 +370,9 @@ function computePageHighlights(
         h: Math.max(12, Math.round(Math.abs(rect[3] - rect[1]) / dpr)),
       };
 
-      // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, changed words, color mismatches) in red/amber!
+      // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, real changed words) in red! Never mark color errors or approved master words!
       const realWordErrors = (lr.wordErrors || []).filter(
-        (we) =>
-          we.type === 'number' ||
-          we.type === 'word_changed' ||
-          we.type === 'extra_word' ||
-          we.type === 'color' ||
-          we.type === 'color_mismatch'
+        (we) => !isIgnoredWordError(we, lr.expected)
       );
       const isMatch = lr.color === 'green' && realWordErrors.length === 0;
       const hasWordErrors = realWordErrors.length > 0;
@@ -646,12 +668,9 @@ function computePageHighlights(
         const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
         const safeLineBox = { ...pl.box, h: safeLineH };
 
-        // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, changed words) in red! Never mark color errors!
+        // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, real changed words) in red! Never mark color errors or approved master words!
         const realWordErrors = (matchedLr.wordErrors || []).filter(
-          (we) =>
-            we.type === 'number' ||
-            we.type === 'word_changed' ||
-            we.type === 'extra_word'
+          (we) => !isIgnoredWordError(we, matchedLr.expected)
         );
         const hasWordErrors = realWordErrors.length > 0;
         const isMatch = matchedLr.color === 'green' && !hasWordErrors;
@@ -888,6 +907,8 @@ function computePageHighlights(
       target = rawExpected;
     }
     if (!target) return;
+    if (err.category === 'Color Mismatch' || (err.type && err.type.includes('color'))) return;
+    if (isIgnoredWordError({ word: rawFound, type: err.type }, err.expected)) return;
 
     // ── STRATEGY 0: MISSING WORD INSERTION MARKER (Requirement 7) ──
     if (err.isMissingWord || err.found === '(missing in PDF)' || err.found === '(deleted)' || err.category === 'Missing Word') {

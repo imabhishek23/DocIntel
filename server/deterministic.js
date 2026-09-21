@@ -273,25 +273,8 @@ export function detectProofreadingErrors(textA, textB) {
     colorGroups.push(currentColorGroup);
   }
 
-  // Emit proofreading discrepancies for all detected color changes
-  for (const group of colorGroups) {
-    const phraseA = group.wordsA.join(' ');
-    const phraseB = group.wordsB.join(' ');
-    const ctxStart = Math.max(0, (group.startIdxB || 0) - 3);
-    const ctxEnd = Math.min(tokensB.length, (group.lastIdxB || 0) + 4);
-    const contextStr = tokensB.slice(ctxStart, ctxEnd).map((t) => t.raw).join(' ');
+  // Color differences between documents are ignored per user requirement
 
-    errors.push({
-      id: `proof_color_${errId++}`,
-      category: 'Color Mismatch',
-      type: 'color_mismatch',
-      severity: 'high',
-      expected: `${group.expColor}: "${phraseA}"`,
-      found: `${group.foundColor}: "${phraseB}"`,
-      details: `Color mismatch: '${phraseB}' is styled in ${group.foundColor}, but baseline specifies ${group.expColor}.`,
-      context: contextStr,
-    });
-  }
 
   // Emit proofreading discrepancies for all detected style changes
   for (const group of styleGroups) {
@@ -1618,8 +1601,183 @@ function isOcrWordMatch(normA, normB) {
   return false;
 }
 
-function normalizeTokenStr(w) {
-  return (w || '').toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '');
+const STOP_WORDS = new Set([
+  'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are', 'aren',
+  'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by',
+  'can', 'cannot', 'could', 'did', 'do', 'does', 'doing', 'down', 'during', 'each', 'few', 'for',
+  'from', 'further', 'had', 'has', 'have', 'having', 'he', 'her', 'here', 'hers', 'herself', 'him',
+  'himself', 'his', 'how', 'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'just', 'me', 'more',
+  'most', 'my', 'myself', 'no', 'nor', 'not', 'now', 'of', 'off', 'on', 'once', 'only', 'or', 'other',
+  'ought', 'our', 'ours', 'ourselves', 'out', 'over', 'own', 'same', 'she', 'should', 'so', 'some',
+  'such', 'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there', 'these',
+  'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up', 'very', 'was', 'we', 'were',
+  'what', 'when', 'where', 'which', 'while', 'who', 'whom', 'why', 'with', 'would', 'you', 'your', 'yours',
+]);
+
+function isTokensEquivalent(ct, bt) {
+  if (!ct || !bt) return false;
+  const stripA = stripAlphanum(ct.raw);
+  const stripB = stripAlphanum(bt.raw);
+  if (stripA && stripA === stripB) return true;
+  if (ct.norm && bt.norm && ct.norm === bt.norm) return true;
+  if (ct.clean && bt.clean && ct.clean.toLowerCase() === bt.clean.toLowerCase()) return true;
+  if (ct.norm && bt.norm && isOcrWordMatch(ct.norm, bt.norm)) return true;
+  if (stripA && stripB && isOcrWordMatch(stripA, stripB)) return true;
+  const isUgtOcr = ct.norm?.replace(/[1l|!]/g, 'i') === bt.norm?.replace(/[1l|!]/g, 'i');
+  if (isUgtOcr) return true;
+  return false;
+}
+
+function hasDifferentNumbers(ct, bt) {
+  if (!ct || !bt) return false;
+  const numMatchesA = (ct.raw || '').match(/\d+(?:\.\d+)?/g);
+  const numMatchesB = (bt.raw || '').match(/\d+(?:\.\d+)?/g);
+  const digitsA = numMatchesA ? numMatchesA.join(',') : '';
+  const digitsB = numMatchesB ? numMatchesB.join(',') : '';
+  const hasNumA = digitsA.length > 0;
+  const hasNumB = digitsB.length > 0;
+  if (hasNumA && hasNumB && digitsA !== digitsB) {
+    const isUgtOcr = ct.norm?.replace(/[1l|!]/g, 'i') === bt.norm?.replace(/[1l|!]/g, 'i');
+    const isGteOcr =
+      ((ct.raw.includes('≥') || ct.raw.includes('>=')) && digitsA === '1' && digitsB === '21') ||
+      ((bt.raw.includes('≥') || bt.raw.includes('>=')) && digitsB === '1' && digitsA === '21');
+    if (!isUgtOcr && !isGteOcr) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
+  const M = bTokens.length;
+  const N = cSlice.length;
+  if (M === 0) return { consumedCount: 0, issues: [], wordErrors: [] };
+  if (N === 0) {
+    const issues = [];
+    const wordErrors = [];
+    bTokens.forEach((bt, bIdx) => {
+      const cleanB = (bt.clean || '').toLowerCase();
+      const stripB = stripAlphanum(bt.raw);
+      if (STOP_WORDS.has(cleanB) || STOP_WORDS.has(stripB) || canonicalWordsSet.has(stripB)) return;
+      const issueMsg = `Extra Word: "${bt.raw}"`;
+      issues.push(issueMsg);
+      wordErrors.push({
+        word: bt.raw,
+        clean: bt.clean,
+        expected: '(none)',
+        issue: issueMsg,
+        type: 'extra_word',
+        bStartIdx: bIdx,
+        bEndIdx: bIdx + 1,
+      });
+    });
+    return { consumedCount: 0, issues, wordErrors };
+  }
+
+  const dp = Array.from({ length: M + 1 }, () => new Int32Array(N + 1));
+
+  for (let i = 1; i <= M; i++) {
+    const bt = bTokens[i - 1];
+    for (let j = 1; j <= N; j++) {
+      const ct = cSlice[j - 1];
+      if (isTokensEquivalent(ct, bt) && !hasDifferentNumbers(ct, bt)) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+
+  let bestJ = N;
+  let maxScore = dp[M][N];
+  for (let j = 1; j <= N; j++) {
+    if (dp[M][j] === maxScore) {
+      bestJ = j;
+      break;
+    }
+  }
+
+  let i = M;
+  let j = bestJ;
+  const alignedPairs = [];
+
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0) {
+      const bt = bTokens[i - 1];
+      const ct = cSlice[j - 1];
+      if (isTokensEquivalent(ct, bt) && !hasDifferentNumbers(ct, bt) && dp[i][j] === dp[i - 1][j - 1] + 1) {
+        alignedPairs.unshift({ bt, ct, bIdx: i - 1, cIdx: j - 1, match: true });
+        i--;
+        j--;
+        continue;
+      }
+    }
+    if (i > 0 && (j === 0 || dp[i - 1][j] >= dp[i][j - 1])) {
+      if (j > 0 && !isTokensEquivalent(cSlice[j - 1], bTokens[i - 1])) {
+        alignedPairs.unshift({ bt: bTokens[i - 1], ct: cSlice[j - 1], bIdx: i - 1, cIdx: j - 1, match: false });
+        i--;
+        j--;
+      } else {
+        alignedPairs.unshift({ bt: bTokens[i - 1], ct: null, bIdx: i - 1, cIdx: null, match: false });
+        i--;
+      }
+    } else if (j > 0) {
+      alignedPairs.unshift({ bt: null, ct: cSlice[j - 1], bIdx: null, cIdx: j - 1, match: false });
+      j--;
+    }
+  }
+
+  const issues = [];
+  const wordErrors = [];
+
+  for (const pair of alignedPairs) {
+    const { bt, ct, bIdx } = pair;
+    if (!bt) continue;
+    if (pair.match) continue;
+
+    if (ct && hasDifferentNumbers(ct, bt)) {
+      const issueMsg = `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
+      issues.push(issueMsg);
+      wordErrors.push({
+        word: bt.raw,
+        clean: bt.clean,
+        expected: ct.raw,
+        issue: issueMsg,
+        type: 'number',
+        bStartIdx: bIdx,
+        bEndIdx: bIdx + 1,
+      });
+      continue;
+    }
+
+    const stripB = stripAlphanum(bt.raw);
+    const cleanB = (bt.clean || '').toLowerCase();
+    if (STOP_WORDS.has(cleanB) || STOP_WORDS.has(stripB)) {
+      continue;
+    }
+    if (canonicalWordsSet.has(stripB)) {
+      continue;
+    }
+
+    const expText = ct ? ct.raw : '(none)';
+    const issueMsg = ct ? `Word Mistake: Found "${bt.raw}", expected "${ct.raw}"` : `Extra Word: "${bt.raw}"`;
+    issues.push(issueMsg);
+    wordErrors.push({
+      word: bt.raw,
+      clean: bt.clean,
+      expected: expText,
+      issue: issueMsg,
+      type: ct ? 'word_changed' : 'extra_word',
+      bStartIdx: bIdx,
+      bEndIdx: bIdx + 1,
+    });
+  }
+
+  return {
+    consumedCount: bestJ,
+    issues,
+    wordErrors,
+  };
 }
 
 /**
@@ -1667,6 +1825,10 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       });
     }
   }
+
+  const canonicalWordsSet = new Set(
+    canonicalTokens.map((t) => stripAlphanum(t.raw)).filter((s) => s.length > 0)
+  );
 
   let cCursor = 0;
   let lastConsumedRefLine = -1;
@@ -1992,269 +2154,15 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       pendingHyphenPrefix = null;
     }
 
-    while (bIdx < bTokens.length) {
-      // Skip symbol-only bullets (•, *, +, -) if encountered mid-stream
-      if (
-        tokenCursor < canonicalTokens.length &&
-        canonicalTokens[tokenCursor].isSymbolOnly &&
-        !canonicalTokens[tokenCursor].norm
-      ) {
-        tokenCursor++;
-        continue;
-      }
-      if (bTokens[bIdx].isSymbolOnly && !bTokens[bIdx].norm) {
-        bIdx++;
-        continue;
-      }
-
-      const bt = bTokens[bIdx];
-      if (tokenCursor >= canonicalTokens.length) {
-        const issueMsg = `Extra word: "${bt.raw}"`;
-        issues.push(issueMsg);
-        wordErrors.push({
-          word: bt.raw,
-          clean: bt.clean,
-          expected: '(none)',
-          issue: issueMsg,
-          type: 'extra_word',
-          bStartIdx: bIdx,
-          bEndIdx: bIdx + 1,
-        });
-        bIdx++;
-        continue;
-      }
-
-      const ct = canonicalTokens[tokenCursor];
-      const normA = ct.norm || '';
-      const normB = bt.norm || '';
-      const cleanA = (ct.clean || '').toLowerCase();
-      const cleanB = (bt.clean || '').toLowerCase();
-
-      // 1. Exact or clean word match (Check color mismatch on matched words/headings)
-      const stripA = stripAlphanum(ct.raw);
-      const stripB = stripAlphanum(bt.raw);
-      if (normA === normB || (cleanA && cleanA === cleanB) || (stripA && stripA === stripB && stripA.length > 0)) {
-        if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
-          const expColorName = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard (black)' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard (black)');
-          const foundColorName = (bt.colorCategory === 'black' || !bt.colorCategory ? 'standard (black)' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'different color');
-          const issueMsg = `Color Mismatch: Found "${bt.raw}" in ${foundColorName}, expected ${expColorName}`;
-          issues.push(issueMsg);
-          wordErrors.push({
-            word: bt.raw,
-            clean: bt.clean,
-            expected: ct.raw,
-            issue: issueMsg,
-            type: 'color_mismatch',
-            expectedColor: ct.color,
-            foundColor: bt.color,
-            expectedColorName: expColorName,
-            foundColorName: foundColorName,
-            bStartIdx: bIdx,
-            bEndIdx: bIdx + 1,
-          });
-        }
-        bIdx++;
-        tokenCursor++;
-        continue;
-      }
-
-      // Check if bt is the last token on line B and is a hyphenated prefix of ct (e.g. "pre-", "syndrom-", "Disconti-", "APRETU-")
-      const isLastTokenOnLine = bIdx === bTokens.length - 1;
-      if (isLastTokenOnLine && stripB && stripA.startsWith(stripB) && stripA !== stripB) {
-        pendingHyphenPrefix = {
-          lineResult: null,
-          lastToken: bt,
-          refToken: ct,
-          refTokenIndex: tokenCursor,
-        };
-        bIdx++;
-        continue;
-      }
-
-      // Check multi-token joins on the same line (e.g. "every-2" + "month" -> "every-2-month", "gastro" + "intestinal" -> "gastrointestinal")
-      if (bIdx + 1 < bTokens.length) {
-        const join2 = stripAlphanum(bt.raw + bTokens[bIdx + 1].raw);
-        const ctClean = stripAlphanum(ct.raw);
-        if (join2 === ctClean || (Math.abs(join2.length - ctClean.length) <= 1 && levenshteinDist(join2, ctClean) <= 1)) {
-          bIdx += 2;
-          tokenCursor++;
-          continue;
-        }
-      }
-      if (bIdx + 2 < bTokens.length) {
-        const join3 = stripAlphanum(bt.raw + bTokens[bIdx + 1].raw + bTokens[bIdx + 2].raw);
-        const ctClean = stripAlphanum(ct.raw);
-        if (join3 === ctClean || (Math.abs(join3.length - ctClean.length) <= 1 && levenshteinDist(join3, ctClean) <= 1)) {
-          bIdx += 3;
-          tokenCursor++;
-          continue;
-        }
-      }
-      if (tokenCursor + 1 < canonicalTokens.length) {
-        const joinA2 = stripAlphanum(ct.raw + canonicalTokens[tokenCursor + 1].raw);
-        const btClean = stripAlphanum(bt.raw);
-        if (
-          joinA2 === btClean ||
-          (Math.abs(joinA2.length - btClean.length) <= 3 && levenshteinDist(joinA2, btClean) <= 3) ||
-          (joinA2.length >= 8 && btClean.length >= 7 && (joinA2.includes(btClean) || btClean.includes(joinA2)))
-        ) {
-          bIdx++;
-          tokenCursor += 2;
-          continue;
-        }
-      }
-      if (tokenCursor + 2 < canonicalTokens.length) {
-        const joinA3 = stripAlphanum(ct.raw + canonicalTokens[tokenCursor + 1].raw + canonicalTokens[tokenCursor + 2].raw);
-        const btClean = stripAlphanum(bt.raw);
-        if (joinA3 === btClean || (Math.abs(joinA3.length - btClean.length) <= 2 && levenshteinDist(joinA3, btClean) <= 2)) {
-          bIdx++;
-          tokenCursor += 3;
-          continue;
-        }
-      }
-
-      // 2. Number mismatch check (critical check: numbers like 30 vs 35, 600 mg vs 400 mg must ALWAYS be flagged)
-      const numMatchesA = ct.raw.match(/\d+(?:\.\d+)?/g);
-      const numMatchesB = bt.raw.match(/\d+(?:\.\d+)?/g);
-      const digitsA = numMatchesA ? numMatchesA.join(',') : '';
-      const digitsB = numMatchesB ? numMatchesB.join(',') : '';
-      const hasNumA = digitsA.length > 0;
-      const hasNumB = digitsB.length > 0;
-
-      // Flag number mismatch ONLY if both tokens contain numbers AND the numeric values actually differ!
-      // Handle OCR character confusions: 'I' or 'l' vs '1', '2' vs '≥' (e.g. UGT1A1 vs UGTIA1, ≥1% vs 21%)
-      const isUgtOcr = (normA.replace(/[1l|!]/g, 'i') === normB.replace(/[1l|!]/g, 'i'));
-      const isGteOcr = ((ct.raw.includes('≥') || ct.raw.includes('>=')) && digitsA === '1' && digitsB === '21') ||
-                       ((bt.raw.includes('≥') || bt.raw.includes('>=')) && digitsB === '1' && digitsA === '21');
-      if (hasNumA && hasNumB && digitsA !== digitsB && !isUgtOcr && !isGteOcr) {
-        const issueMsg = `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
-        issues.push(issueMsg);
-        wordErrors.push({
-          word: bt.raw,
-          clean: bt.clean,
-          expected: ct.raw,
-          issue: issueMsg,
-          type: 'number',
-          bStartIdx: bIdx,
-          bEndIdx: bIdx + 1,
-        });
-        bIdx++;
-        tokenCursor++;
-        continue;
-      }
-
-      // 3. Fuzzy match: minor OCR noise or character differences on valid reference words
-      // User Requirement: Check words/sentences only. If the word matches the reference, do NOT mark red!
-      if (
-        isOcrWordMatch(normA, normB) ||
-        isGteOcr ||
-        isUgtOcr ||
-        (hasNumA && hasNumB && digitsA === digitsB && isOcrWordMatch(stripAlphanum(normA), stripAlphanum(normB)))
-      ) {
-        if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
-          const expColorName = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard (black)' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard (black)');
-          const foundColorName = (bt.colorCategory === 'black' || !bt.colorCategory ? 'standard (black)' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'different color');
-          const issueMsg = `Color Mismatch: Found "${bt.raw}" in ${foundColorName}, expected ${expColorName}`;
-          issues.push(issueMsg);
-          wordErrors.push({
-            word: bt.raw,
-            clean: bt.clean,
-            expected: ct.raw,
-            issue: issueMsg,
-            type: 'color_mismatch',
-            expectedColor: ct.color,
-            foundColor: bt.color,
-            expectedColorName: expColorName,
-            foundColorName: foundColorName,
-            bStartIdx: bIdx,
-            bEndIdx: bIdx + 1,
-          });
-        }
-        bIdx++;
-        tokenCursor++;
-        continue;
-      }
-
-      // 4. Missing word in B
-      let foundAhead = -1;
-      for (let look = 1; look <= 4; look++) {
-        if (
-          tokenCursor + look < canonicalTokens.length &&
-          (canonicalTokens[tokenCursor + look].norm === normB ||
-            isOcrWordMatch(canonicalTokens[tokenCursor + look].norm, normB))
-        ) {
-          foundAhead = look;
-          break;
-        }
-      }
-
-      if (foundAhead > 0) {
-        const omitted = canonicalTokens
-          .slice(tokenCursor, tokenCursor + foundAhead)
-          .map((t) => t.raw)
-          .join(' ');
-        const issueMsg = `Missing Word: "${omitted}"`;
-        issues.push(issueMsg);
-        wordErrors.push({
-          word: omitted,
-          clean: omitted,
-          expected: omitted,
-          issue: issueMsg,
-          type: 'missing_word',
-          bStartIdx: bIdx,
-          bEndIdx: bIdx,
-        });
-        tokenCursor += foundAhead;
-        continue;
-      }
-
-      // 5. Extra word in B
-      let foundAheadB = -1;
-      for (let lookB = 1; lookB <= 4; lookB++) {
-        if (
-          bIdx + lookB < bTokens.length &&
-          (bTokens[bIdx + lookB].norm === normA ||
-            isOcrWordMatch(normA, bTokens[bIdx + lookB].norm))
-        ) {
-          foundAheadB = lookB;
-          break;
-        }
-      }
-      if (foundAheadB > 0) {
-        const extra = bTokens
-          .slice(bIdx, bIdx + foundAheadB)
-          .map((t) => t.raw)
-          .join(' ');
-        const issueMsg = `Extra Word: "${extra}"`;
-        issues.push(issueMsg);
-        wordErrors.push({
-          word: extra,
-          clean: extra,
-          expected: '(none)',
-          issue: issueMsg,
-          type: 'extra_word',
-          bStartIdx: bIdx,
-          bEndIdx: bIdx + foundAheadB,
-        });
-        bIdx += foundAheadB;
-        continue;
-      }
-
-      // 6. Changed word / Word mistake
-      const issueMsg = `Word Mistake: Found "${bt.raw}", expected "${ct.raw}"`;
-      issues.push(issueMsg);
-      wordErrors.push({
-        word: bt.raw,
-        clean: bt.clean,
-        expected: ct.raw,
-        issue: issueMsg,
-        type: 'word_changed',
-        bStartIdx: bIdx,
-        bEndIdx: bIdx + 1,
-      });
-      bIdx++;
-      tokenCursor++;
-    }
+    // Use LCS alignment to accurately match tokens without greedy lookahead or cascaded false errors
+    const cSlice = canonicalTokens.slice(
+      tokenCursor,
+      Math.min(canonicalTokens.length, tokenCursor + bTokens.length + 12)
+    );
+    const alignmentRes = alignTokensLcs(bTokens, cSlice, canonicalWordsSet);
+    tokenCursor += alignmentRes.consumedCount;
+    issues.push(...alignmentRes.issues);
+    wordErrors.push(...alignmentRes.wordErrors);
 
     cCursor = tokenCursor;
     lastConsumedRefLine = canonicalTokens[tokenCursor - 1]?.refLineIndex ?? currRefLine;
@@ -2295,66 +2203,19 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         wordErrors: [],
       });
     } else {
-      // Group consecutive color mismatch word errors on the same line (e.g. "WARNINGS" + "AND" + "PRECAUTIONS")
-      const groupedWordErrors = [];
-      let curColorGroup = null;
-      for (const we of wordErrors) {
-        if (we.type === 'color_mismatch' || we.type === 'color') {
-          if (
-            curColorGroup &&
-            curColorGroup.expectedColorName === we.expectedColorName &&
-            curColorGroup.foundColorName === we.foundColorName &&
-            we.bStartIdx === curColorGroup.bEndIdx
-          ) {
-            curColorGroup.word += ' ' + we.word;
-            curColorGroup.clean += ' ' + we.clean;
-            curColorGroup.expected += ' ' + we.expected;
-            curColorGroup.bEndIdx = we.bEndIdx;
-            curColorGroup.issue = `Color Mismatch: Found "${curColorGroup.word}" in ${curColorGroup.foundColorName}, expected ${curColorGroup.expectedColorName}`;
-          } else {
-            if (curColorGroup) groupedWordErrors.push(curColorGroup);
-            curColorGroup = { ...we, type: 'color_mismatch' };
-          }
-        } else {
-          if (curColorGroup) {
-            groupedWordErrors.push(curColorGroup);
-            curColorGroup = null;
-          }
-          groupedWordErrors.push(we);
-        }
-      }
-      if (curColorGroup) groupedWordErrors.push(curColorGroup);
-
-      // Prioritize issues according to user requirement: Color first, then Number, Word, Missing, Extra
-      const errorPriority = (typeOrStr) => {
-        const s = (typeOrStr || '').toLowerCase();
-        if (s.includes('color')) return 1;
-        if (s.includes('number')) return 2;
-        if (s.includes('word') || s.includes('spelling')) return 3;
-        if (s.includes('missing')) return 4;
-        if (s.includes('extra')) return 5;
-        if (s.includes('case') || s.includes('capital')) return 6;
-        if (s.includes('punct')) return 7;
-        if (s.includes('space')) return 8;
-        if (s.includes('format') || s.includes('bold') || s.includes('italic')) return 9;
-        return 10;
-      };
-
-      groupedWordErrors.sort((a, b) => errorPriority(a.type || a.issue) - errorPriority(b.type || b.issue));
+      const groupedWordErrors = wordErrors;
       const sortedIssues = groupedWordErrors.map((we) => we.issue);
       const comment = sortedIssues.length > 0 ? sortedIssues.join('; ') : issues.join('; ');
 
       const cleanLineNoPunct = cleanLine.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '');
-      const onlyColorErrors = groupedWordErrors.length > 0 && groupedWordErrors.every((we) => we.type === 'color_mismatch');
       const changedOrExtraCount = groupedWordErrors.filter(
         (we) => we.type === 'word_changed' || we.type === 'extra_word'
       ).length;
-      const isMajorityChanged = !onlyColorErrors && bTokens.length >= 3 && (changedOrExtraCount / bTokens.length >= 0.7);
+      const isMajorityChanged = bTokens.length >= 3 && (changedOrExtraCount / bTokens.length >= 0.7);
       const isWholeLineError =
-        !onlyColorErrors &&
-        (groupedWordErrors.some(
-          (we) => we.type !== 'color_mismatch' && we.clean && we.clean.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '') === cleanLineNoPunct
-        ) || isMajorityChanged);
+        groupedWordErrors.some(
+          (we) => we.clean && we.clean.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '') === cleanLineNoPunct
+        ) || isMajorityChanged;
 
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
@@ -2364,7 +2225,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         page: lineB.page || 1,
         box: lineB.box || null,
         color: isWholeLineError ? 'red' : 'green', // Green background with localized red/amber word boxes, red line only if entirely replaced
-        status: isWholeLineError ? (isMajorityChanged ? 'extra_line' : 'mismatched') : (onlyColorErrors ? 'color_mismatch' : 'matched_with_word_errors'),
+        status: isWholeLineError ? (isMajorityChanged ? 'extra_line' : 'mismatched') : 'matched_with_word_errors',
         hasWordErrors: true,
         comment,
         issues: sortedIssues,
@@ -2377,14 +2238,12 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       if (groupedWordErrors.length > 0) {
         for (let wIdx = 0; wIdx < groupedWordErrors.length; wIdx++) {
           const we = groupedWordErrors[wIdx];
-          const isColor = we.type === 'color_mismatch';
           const isNum = we.type === 'number';
           const isMissing = we.type === 'missing_word';
           const isExtra = we.type === 'extra_word';
 
           let errCategory = 'Word Mistake';
-          if (isColor) errCategory = 'Color Mismatch';
-          else if (isNum) errCategory = 'Number Mismatch';
+          if (isNum) errCategory = 'Number Mismatch';
           else if (isMissing) errCategory = 'Missing Word';
           else if (isExtra) errCategory = 'Extra Word';
           else if (we.type === 'spelling') errCategory = 'Spelling Mistake';
@@ -2393,14 +2252,10 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
           else if (we.type === 'capitalization') errCategory = 'Capitalization Difference';
           else if (we.type === 'punctuation') errCategory = 'Punctuation Difference';
 
-          const expDisplay = isColor
-            ? `${we.expected || we.clean || we.word} (${we.expectedColorName || 'standard (black)'})`
-            : isExtra
+          const expDisplay = isExtra
             ? '(none - extra in PDF)'
             : (we.expected || '(none)');
-          const foundDisplay = isColor
-            ? `${we.word || we.clean} (${we.foundColorName || 'purple'})`
-            : isMissing
+          const foundDisplay = isMissing
             ? '(missing in PDF)'
             : (we.word || '(none)');
 
@@ -2534,8 +2389,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
   }
 
   const errorSummary = {
-    color: proofreadingErrors.filter((e) => e.category.includes('Color')).length,
-    colorMismatches: proofreadingErrors.filter((e) => e.category.includes('Color')).length,
+    color: 0,
+    colorMismatches: 0,
     numbers: proofreadingErrors.filter((e) => e.category.includes('Number')).length,
     words: proofreadingErrors.filter((e) => e.category.includes('Word') || e.category.includes('Spelling')).length,
     missingWords: proofreadingErrors.filter((e) => e.category.includes('Missing')).length,
