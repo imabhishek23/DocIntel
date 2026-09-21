@@ -213,15 +213,12 @@ export async function extractPdfTextInBrowser(file, onProgress = null) {
                     lastY1 = globalY1;
                     lastText = lineText;
 
-                    const x0 = l.bbox.x0 * scaleBackX;
-                    const y0 = globalY0 * scaleBackY;
-                    const x1 = l.bbox.x1 * scaleBackX;
-                    const y1 = globalY1 * scaleBackY;
-
-                    const pdfX = Math.round(x0);
-                    const pdfY = Math.round(origViewport.height - y1);
-                    const pdfW = Math.round(x1 - x0);
-                    const pdfH = Math.round(y1 - y0);
+                    const [pX0, pY0] = origViewport.convertToPdfPoint(l.bbox.x0 * scaleBackX, globalY0 * scaleBackY);
+                    const [pX1, pY1] = origViewport.convertToPdfPoint(l.bbox.x1 * scaleBackX, globalY1 * scaleBackY);
+                    const pdfX = Math.round(Math.min(pX0, pX1));
+                    const pdfY = Math.round(Math.min(pY0, pY1));
+                    const pdfW = Math.round(Math.abs(pX1 - pX0));
+                    const pdfH = Math.round(Math.abs(pY1 - pY0));
 
                     // Sample font color from main canvas
                     const cx = Math.floor((l.bbox.x0 + l.bbox.x1) / 2);
@@ -257,15 +254,12 @@ export async function extractPdfTextInBrowser(file, onProgress = null) {
                   const lineText = (l.text || '').trim();
                   if (!lineText) return;
 
-                  const x0 = l.bbox.x0 * scaleBackX;
-                  const y0 = l.bbox.y0 * scaleBackY;
-                  const x1 = l.bbox.x1 * scaleBackX;
-                  const y1 = l.bbox.y1 * scaleBackY;
-
-                  const pdfX = Math.round(x0);
-                  const pdfY = Math.round(origViewport.height - y1);
-                  const pdfW = Math.round(x1 - x0);
-                  const pdfH = Math.round(y1 - y0);
+                  const [pX0, pY0] = origViewport.convertToPdfPoint(l.bbox.x0 * scaleBackX, l.bbox.y0 * scaleBackY);
+                  const [pX1, pY1] = origViewport.convertToPdfPoint(l.bbox.x1 * scaleBackX, l.bbox.y1 * scaleBackY);
+                  const pdfX = Math.round(Math.min(pX0, pX1));
+                  const pdfY = Math.round(Math.min(pY0, pY1));
+                  const pdfW = Math.round(Math.abs(pX1 - pX0));
+                  const pdfH = Math.round(Math.abs(pY1 - pY0));
 
                   const cx = Math.floor((l.bbox.x0 + l.bbox.x1) / 2);
                   const cy = Math.floor((l.bbox.y0 + l.bbox.y1) / 2);

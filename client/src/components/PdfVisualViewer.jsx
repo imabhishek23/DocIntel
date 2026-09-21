@@ -206,6 +206,15 @@ function computePageHighlights(
     const directHighlights = [];
     for (let idx = 0; idx < pageBoxesFromIsi.length; idx++) {
       const lr = pageBoxesFromIsi[idx];
+      const lrText = (lr.text || '').trim();
+      if (!lrText || lr.status === 'extra_line') continue;
+      if (
+        /^(?:References\b|References:|To\s+report\s+SUSPECTED|Please\s+(?:click|see)\s+(?:here\s+for\s+)?full\s+Prescribing|Click\s+to\s+view|This\s+email\s+(?:is|was)|Legal\s+Notices|Privacy\s+Notice|PM-?US-|©\s*\d{4}|Trademarks\s+are\s+owned|\d+\.\s+[A-Z][a-z]+|ViiV\s+Healthcare|1st-party\s+footer)/i.test(
+          lrText
+        )
+      ) {
+        continue;
+      }
       const rect = viewport.convertToViewportRectangle([
         lr.box.x,
         lr.box.y,
@@ -331,7 +340,7 @@ function computePageHighlights(
             },
           });
         });
-      } else {
+      } else if (lr.status !== 'extra_line') {
         directHighlights.push({
           id: `isi_box_err_${lr.lineNum || lr.lineIndex || idx}`,
           index: lr.lineNum || lr.lineIndex || idx,
