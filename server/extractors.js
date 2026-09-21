@@ -51,10 +51,12 @@ export async function extractDocumentText(filename, buffer) {
           .replace(/<\/strong>/gi, '</b>')
           .replace(/<em>/gi, '<i>')
           .replace(/<\/em>/gi, '</i>')
+          .replace(/<ins>/gi, '<u>')
+          .replace(/<\/ins>/gi, '</u>')
           .replace(/<br\s*\/?>/gi, '\n')
           .replace(/<li\b[^>]*>/gi, '• ')
           .replace(/<\/(?:p|h[1-6]|div|tr|li|blockquote)>/gi, '\n\n')
-          .replace(/<(?!\/?(?:b|i)\b)[^>]+>/g, '')
+          .replace(/<(?!\/?(?:b|i|u|font)\b)[^>]+>/g, '')
           .replace(/&amp;/g, '&')
           .replace(/&lt;/g, '<')
           .replace(/&gt;/g, '>')
@@ -133,22 +135,27 @@ function getColorCategory(color) {
   }
 
   // 4. Purple / violet headings (e.g. APRETUDE headers: r ~ 91, b ~ 100, g ~ 33 - red & blue high, green suppressed)
-  if ((r > 50 && b > 60 && (r + b) > g * 2.2 && Math.abs(r - b) < 80) || (r > 70 && b > 70 && g < 60)) {
+  if ((r > 50 && b > 60 && (r + b) > g * 1.8 && Math.abs(r - b) < 100) || (r > 70 && b > 70 && g < 70)) {
     return 'purple';
   }
 
-  // 5. Red channel dominates (crimson/red headings)
-  if (r > 120 && r > g * 1.5 && r > b * 1.5) {
+  // 5. Teal / Cyan (e.g. AEROVIA hypersensitivity: green & blue dominate red)
+  if (g > 70 && b > 70 && (g + b) > (r * 1.8) && r < 120) {
+    return 'teal';
+  }
+
+  // 6. Red channel dominates (crimson/red headings)
+  if (r > 120 && r > g * 1.4 && r > b * 1.4) {
     return 'red';
   }
 
-  // 6. Blue channel dominates (hyperlink blue)
-  if (b > 120 && b > r * 1.3 && b > g * 1.3) {
+  // 7. Blue channel dominates (hyperlink blue)
+  if (b > 100 && b > r * 1.2 && b > g * 1.2) {
     return 'blue';
   }
 
-  // 7. Green dominates
-  if (g > 120 && g > r * 1.3 && g > b * 1.3) {
+  // 8. Green dominates
+  if (g > 100 && g > r * 1.2 && g > b * 1.2) {
     return 'green';
   }
 
@@ -188,6 +195,9 @@ function assembleLineItems(lineItems) {
       } else if (cur.isItalic) {
         t = `<i>${t}</i>`;
       }
+      if (cur.isUnderline) {
+        t = `<u>${t}</u>`;
+      }
       if (cur.colorCategory && cur.colorCategory !== 'black') {
         t = `<font color="rgb(${cur.color.join(',')})" data-cat="${cur.colorCategory}">${t}</font>`;
       }
@@ -198,6 +208,7 @@ function assembleLineItems(lineItems) {
   return lineStr
     .replace(/<\/b>(\s*)<b>/g, '$1')
     .replace(/<\/i>(\s*)<i>/g, '$1')
+    .replace(/<\/u>(\s*)<u>/g, '$1')
     .replace(/<\/i><\/b>(\s*)<b><i>/g, '$1')
     .replace(/[ \t]+/g, ' ')
     .trim();
@@ -315,10 +326,28 @@ async function extractPdfText(buffer) {
           colorStack.push([...currentFill]);
         } else if (fn === pdfjs.OPS.restore) {
           if (colorStack.length > 0) currentFill = colorStack.pop();
-        } else if (fn === pdfjs.OPS.setFillRGBColor) {
-          currentFill = [args[0], args[1], args[2]];
-        } else if (fn === pdfjs.OPS.setFillGray) {
-          currentFill = [args[0], args[0], args[0]];
+        } else if (fn === pdfjs.OPS.setFillRGBColor || fn === pdfjs.OPS.setStrokeRGBColor) {
+          let [r, g, b] = args;
+          if (r <= 1 && g <= 1 && b <= 1 && (r > 0 || g > 0 || b > 0)) {
+            r = Math.round(r * 255);
+            g = Math.round(g * 255);
+            b = Math.round(b * 255);
+          }
+          currentFill = [Math.round(r), Math.round(g), Math.round(b)];
+        } else if (fn === pdfjs.OPS.setFillGray || fn === pdfjs.OPS.setStrokeGray) {
+          let gray = args[0];
+          if (gray <= 1 && gray > 0) gray = Math.round(gray * 255);
+          const gVal = Math.round(gray);
+          currentFill = [gVal, gVal, gVal];
+        } else if (fn === pdfjs.OPS.setFillCMYKColor || fn === pdfjs.OPS.setStrokeCMYKColor) {
+          let [c, m, y, k] = args;
+          if (c > 1 || m > 1 || y > 1 || k > 1) {
+            c = c / 100; m = m / 100; y = y / 100; k = k / 100;
+          }
+          const r = Math.round(255 * (1 - c) * (1 - k));
+          const g = Math.round(255 * (1 - m) * (1 - k));
+          const b = Math.round(255 * (1 - y) * (1 - k));
+          currentFill = [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))];
         } else if (fn === pdfjs.OPS.showText || fn === pdfjs.OPS.showSpacedText) {
           const glyphs = args[0];
           let str = '';
@@ -412,16 +441,19 @@ async function extractPdfText(buffer) {
 
         let isBold = false;
         let isItalic = false;
+        let isUnderline = false;
         if (item.fontName && page.commonObjs.has(item.fontName)) {
           const font = page.commonObjs.get(item.fontName);
           if (font) {
             isBold = !!font.bold || (typeof font.name === 'string' && /bold|black|heavy/i.test(font.name));
             isItalic = !!font.italic || (typeof font.name === 'string' && /italic|oblique/i.test(font.name));
+            isUnderline = !!font.underline || (typeof font.name === 'string' && /underline/i.test(font.name));
           }
         }
         if (item.fontName) {
           if (/bold/i.test(item.fontName)) isBold = true;
           if (/italic|oblique/i.test(item.fontName)) isItalic = true;
+          if (/underline/i.test(item.fontName)) isUnderline = true;
         }
 
         const s = (item.str || '').trim();
@@ -496,6 +528,7 @@ async function extractPdfText(buffer) {
           height: item.height || 10,
           isBold,
           isItalic,
+          isUnderline,
           color: matchedColor,
           colorCategory: getColorCategory(matchedColor),
         });

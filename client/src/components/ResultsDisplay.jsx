@@ -440,15 +440,25 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
   const { proofreadingErrors, errorSummary } = useMemo(() => {
     if (result.proofreadingErrors && result.proofreadingErrors.length > 0) {
       const errs = result.proofreadingErrors;
-      const sum = result.errorSummary || {
-        capitalization: errs.filter((e) => e.category === 'Capitalization').length,
-        spacing: errs.filter((e) => e.category === 'Spacing').length,
-        punctuation: errs.filter((e) => e.category === 'Punctuation').length,
-        numbers: errs.filter((e) => e.category === 'Numbers & Units').length,
-        symbols: errs.filter((e) => e.category === 'Symbols & Trademarks').length,
-        formatting: errs.filter((e) => e.category === 'Formatting (Bold / Italic)').length,
-        words: errs.filter((e) => e.category === 'Word Mismatch').length,
-        color: errs.filter((e) => e.category === 'Color Mismatch' || (e.type && e.type.includes('color'))).length,
+      const sum = {
+        ...(result.errorSummary || {}),
+        textDiscrepanciesCount:
+          result.errorSummary?.textDiscrepanciesCount ??
+          errs.filter((e) => !e.category?.toLowerCase().includes('format') && !e.category?.toLowerCase().includes('color')).length,
+        formattingDiscrepanciesCount:
+          result.errorSummary?.formattingDiscrepanciesCount ??
+          errs.filter((e) => e.category?.toLowerCase().includes('format') || e.category?.toLowerCase().includes('color')).length,
+        verifiedMatchesCount:
+          result.errorSummary?.verifiedMatchesCount ??
+          (isiLineResultsB.filter((r) => r.color === 'green').length || 0),
+        capitalization: result.errorSummary?.capitalization ?? errs.filter((e) => e.category === 'Capitalization').length,
+        spacing: result.errorSummary?.spacing ?? errs.filter((e) => e.category === 'Spacing').length,
+        punctuation: result.errorSummary?.punctuation ?? errs.filter((e) => e.category === 'Punctuation').length,
+        numbers: result.errorSummary?.numbers ?? errs.filter((e) => e.category === 'Numbers & Units').length,
+        symbols: result.errorSummary?.symbols ?? errs.filter((e) => e.category === 'Symbols & Trademarks').length,
+        formatting: result.errorSummary?.formatting ?? errs.filter((e) => e.category?.toLowerCase().includes('format') || e.category?.toLowerCase().includes('bold')).length,
+        words: result.errorSummary?.words ?? errs.filter((e) => e.category === 'Word Mismatch').length,
+        color: result.errorSummary?.color ?? errs.filter((e) => e.category === 'Color Mismatch' || (e.type && e.type.includes('color'))).length,
         total: errs.length,
       };
       return { proofreadingErrors: errs, errorSummary: sum };
@@ -714,7 +724,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
         if ((mismatchFilter === 'Word Mistake' || mismatchFilter === 'Spelling / Word Mismatch') && !(item.errorType?.toLowerCase().includes('spelling') || item.errorType?.toLowerCase().includes('word') || item.errorType?.toLowerCase().includes('changed'))) return false;
         if (mismatchFilter === 'Punctuation' && !item.errorType?.toLowerCase().includes('punctuation')) return false;
         if (mismatchFilter === 'Capitalization' && !item.errorType?.toLowerCase().includes('capitalization') && !item.errorType?.toLowerCase().includes('case')) return false;
-        if (mismatchFilter === 'Formatting (Bold / Italic)' && !item.errorType?.toLowerCase().includes('format') && !item.errorType?.toLowerCase().includes('bold') && !item.errorType?.toLowerCase().includes('italic')) return false;
+        if (mismatchFilter === 'Formatting (Bold / Italic)' && !item.errorType?.toLowerCase().includes('format') && !item.errorType?.toLowerCase().includes('bold') && !item.errorType?.toLowerCase().includes('italic') && !item.errorType?.toLowerCase().includes('underline')) return false;
         if (mismatchFilter === 'Spacing' && !item.errorType?.toLowerCase().includes('spacing')) return false;
       }
       if (mismatchSearchQuery) {
@@ -928,7 +938,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
           </div>
 
           {/* Proofreading Discrepancy Quick Overview */}
-          <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 text-white shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 p-5 text-white shadow-sm space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${errorSummary.total === 0 ? 'bg-emerald-500' : 'bg-rose-500'} text-white shadow-lg`}>
@@ -942,33 +952,57 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                   </h4>
                   <p className="text-xs text-slate-300">
                     {errorSummary.total === 0
-                      ? 'All text, numbers, punctuation, spaces, and formatting match perfectly.'
-                      : 'Audit inspected spaces, punctuation, numbers, capitalization, and symbols.'}
+                      ? 'All wording, numbers, punctuation, colors, and formatting match the reference standard.'
+                      : 'Audit inspected wording sequence, numbers, punctuation, colors, and formatting independently.'}
                   </p>
                 </div>
               </div>
 
-              {/* Categorized Pills */}
-              <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium">
-                <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
-                  🔤 Case: <strong className="text-amber-300">{errorSummary.capitalization}</strong>
-                </span>
-                <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
-                  ␣ Space: <strong className="text-sky-300">{errorSummary.spacing}</strong>
-                </span>
-                <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
-                  ⸲ Punctuation: <strong className="text-pink-300">{errorSummary.punctuation}</strong>
-                </span>
-                <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
-                  🔢 Numbers: <strong className="text-rose-300">{errorSummary.numbers}</strong>
-                </span>
-                <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
-                  🔣 Symbols: <strong className="text-emerald-300">{errorSummary.symbols}</strong>
-                </span>
-                <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
-                  🔠 Format: <strong className="text-purple-300">{errorSummary.formatting || 0}</strong>
-                </span>
+              {/* Three Decoupled Summary Badges */}
+              <div className="flex flex-wrap items-center gap-2 text-xs font-bold">
+                <div className="flex items-center gap-1.5 rounded-xl bg-rose-500/20 border border-rose-400/40 px-3 py-1.5 text-rose-200">
+                  <span className="h-2 w-2 rounded-full bg-rose-500" />
+                  Text Discrepancies: <strong className="text-white text-sm ml-1">{errorSummary.textDiscrepanciesCount ?? (errorSummary.words + errorSummary.numbers + errorSummary.punctuation)}</strong>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-xl bg-amber-500/20 border border-amber-400/40 px-3 py-1.5 text-amber-200">
+                  <span className="h-2 w-2 rounded-full bg-amber-500" />
+                  Formatting: <strong className="text-white text-sm ml-1">{errorSummary.formattingDiscrepanciesCount ?? ((errorSummary.color || 0) + (errorSummary.formatting || 0))}</strong>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/40 px-3 py-1.5 text-emerald-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  Verified Matches: <strong className="text-white text-sm ml-1">{errorSummary.verifiedMatchesCount ?? (isiLineResultsB.filter((r) => r.color === 'green').length || 0)}</strong>
+                </div>
               </div>
+            </div>
+
+            {/* Granular Categorized Pills */}
+            <div className="flex flex-wrap items-center gap-1.5 text-xs font-medium pt-2 border-t border-white/10">
+              <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                🔢 Numbers: <strong className="text-rose-300">{errorSummary.numbers}</strong>
+              </span>
+              <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                📝 Words: <strong className="text-rose-300">{errorSummary.words}</strong>
+              </span>
+              {(errorSummary.missingWords > 0 || errorSummary.extraWords > 0) && (
+                <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                  ⚠ Missing / Extra: <strong className="text-rose-300">{errorSummary.missingWords + errorSummary.extraWords}</strong>
+                </span>
+              )}
+              <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                🎨 Color: <strong className="text-amber-300">{errorSummary.color || errorSummary.colorMismatches || 0}</strong>
+              </span>
+              <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                🔠 Format (Bold/Italic/Underline): <strong className="text-amber-300">{errorSummary.formatting || 0}</strong>
+              </span>
+              <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                ⸲ Punctuation: <strong className="text-pink-300">{errorSummary.punctuation}</strong>
+              </span>
+              <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                🔤 Case: <strong className="text-sky-300">{errorSummary.capitalization}</strong>
+              </span>
+              <span className="rounded-lg bg-white/10 px-2.5 py-1 backdrop-blur-sm border border-white/10">
+                ␣ Space: <strong className="text-sky-300">{errorSummary.spacing}</strong>
+              </span>
             </div>
           </div>
 
@@ -2278,7 +2312,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                 { id: 'Capitalization', label: `🔤 Capitalization (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('capitalization') || m.errorType?.toLowerCase().includes('case')).length})` },
                 { id: 'Punctuation', label: `⸲ Punctuation (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('punctuation')).length})` },
                 { id: 'Spacing', label: `␣ Spacing (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('spacing')).length})` },
-                { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('format') || m.errorType?.toLowerCase().includes('bold') || m.errorType?.toLowerCase().includes('italic')).length})` },
+                { id: 'Formatting (Bold / Italic)', label: `🔠 Formatting (${mismatchReport.filter((m) => m.errorType?.toLowerCase().includes('format') || m.errorType?.toLowerCase().includes('bold') || m.errorType?.toLowerCase().includes('italic') || m.errorType?.toLowerCase().includes('underline')).length})` },
               ].map((f) => (
                 <button
                   key={f.id}

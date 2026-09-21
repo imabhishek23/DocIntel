@@ -98,9 +98,14 @@ export function detectProofreadingErrors(textA, textB) {
         isItalic = false;
       } else if (lower.startsWith('<font') || lower.startsWith('<c') || lower.startsWith('<span')) {
         const matchRgb = part.match(/color=["']?rgb\((\d+),\s*(\d+),\s*(\d+)\)["']?/i);
+        const matchHex = part.match(/color=["']?#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})["']?/i);
         const matchCat = part.match(/(?:cat|data-cat)=["']?([a-z0-9_-]+)["']?/i);
         if (matchRgb) {
           currentColor = [parseInt(matchRgb[1], 10), parseInt(matchRgb[2], 10), parseInt(matchRgb[3], 10)];
+          colorCategory = getColorCategory(currentColor);
+        } else if (matchHex) {
+          currentColor = [parseInt(matchHex[1], 16), parseInt(matchHex[2], 16), parseInt(matchHex[3], 16)];
+          colorCategory = getColorCategory(currentColor);
         }
         if (matchCat) {
           colorCategory = matchCat[1];
@@ -1118,22 +1123,27 @@ export function getColorCategory(color) {
   }
 
   // 4. Purple / violet headings (e.g. APRETUDE headers: r ~ 91, b ~ 100, g ~ 33 - red & blue high, green suppressed)
-  if ((r > 50 && b > 60 && (r + b) > g * 2.2 && Math.abs(r - b) < 80) || (r > 70 && b > 70 && g < 60)) {
+  if ((r > 50 && b > 60 && (r + b) > g * 1.8 && Math.abs(r - b) < 100) || (r > 70 && b > 70 && g < 70)) {
     return 'purple';
   }
 
-  // 5. Red channel dominates (crimson/red headings)
-  if (r > 120 && r > g * 1.5 && r > b * 1.5) {
+  // 5. Teal / Cyan (e.g. AEROVIA hypersensitivity: green & blue dominate red)
+  if (g > 70 && b > 70 && (g + b) > (r * 1.8) && r < 120) {
+    return 'teal';
+  }
+
+  // 6. Red channel dominates (crimson/red headings)
+  if (r > 120 && r > g * 1.4 && r > b * 1.4) {
     return 'red';
   }
 
-  // 6. Blue channel dominates (hyperlink blue)
-  if (b > 120 && b > r * 1.3 && b > g * 1.3) {
+  // 7. Blue channel dominates (hyperlink blue)
+  if (b > 100 && b > r * 1.2 && b > g * 1.2) {
     return 'blue';
   }
 
-  // 7. Green dominates
-  if (g > 120 && g > r * 1.3 && g > b * 1.3) {
+  // 8. Green dominates
+  if (g > 100 && g > r * 1.2 && g > b * 1.2) {
     return 'green';
   }
 
@@ -1141,8 +1151,68 @@ export function getColorCategory(color) {
 }
 
 export function isColorMismatch(colorA, colorB, catA, catB, tokenA, tokenB) {
-  // User Requirement: When words match, do not mark errors or badges for color differences!
+  if (!colorA && !catA && !colorB && !catB) return false;
+  const cA = (colorA ? getColorCategory(colorA) : catA) || 'black';
+  const cB = (colorB ? getColorCategory(colorB) : catB) || 'black';
+
+  const isNeutralA = cA === 'black' || cA === 'gray';
+  const isNeutralB = cB === 'black' || cB === 'gray';
+
+  // Both are neutral body text colors (black vs dark gray) -> no mismatch
+  if (isNeutralA && isNeutralB) return false;
+
+  // If both have distinct non-neutral colors (e.g. orange vs purple, red vs blue, teal vs purple) -> mismatch
+  if (!isNeutralA && !isNeutralB) {
+    if (cA !== cB) return true;
+    if (Array.isArray(colorA) && Array.isArray(colorB)) {
+      const dist = Math.hypot(colorA[0] - colorB[0], colorA[1] - colorB[1], colorA[2] - colorB[2]);
+      if (dist > 80) return true;
+    }
+    return false;
+  }
+
+  // One is neutral (black/gray) and the other has an intentional brand/alert color (purple, orange, teal, red, blue, green):
+  if (isNeutralA !== isNeutralB) {
+    const rawA = (tokenA?.raw || '').replace(/[^a-zA-Z0-9]/g, '');
+    const rawB = (tokenB?.raw || '').replace(/[^a-zA-Z0-9]/g, '');
+    if (!rawA && !rawB) return false;
+    return true;
+  }
+
   return false;
+}
+
+export function getStyleLabel(isBold, isItalic, isUnderline) {
+  const parts = [];
+  if (isBold) parts.push('bold');
+  if (isItalic) parts.push('italic');
+  if (isUnderline) parts.push('underlined');
+  return parts.length > 0 ? parts.join(' ') : 'regular';
+}
+
+export function groupConsecutiveFormattingErrors(errors) {
+  if (!errors || errors.length <= 1) return errors || [];
+  const merged = [];
+  let cur = null;
+  for (const err of errors) {
+    if (
+      cur &&
+      err.type === cur.type &&
+      err.category === cur.category &&
+      err.expected === cur.expected &&
+      err.found === cur.found &&
+      err.bStartIdx === cur.bEndIdx
+    ) {
+      cur.word += ' ' + err.word;
+      cur.clean += ' ' + err.clean;
+      cur.bEndIdx = err.bEndIdx;
+    } else {
+      if (cur) merged.push(cur);
+      cur = { ...err };
+    }
+  }
+  if (cur) merged.push(cur);
+  return merged;
 }
 
 function extractStyledTokensHelper(text) {
@@ -1150,6 +1220,7 @@ function extractStyledTokensHelper(text) {
   const tokens = [];
   let isBold = false;
   let isItalic = false;
+  let isUnderline = false;
   let currentColor = null;
   let colorCategory = 'black';
 
@@ -1166,13 +1237,22 @@ function extractStyledTokensHelper(text) {
       isItalic = true;
     } else if (lower.startsWith('</i')) {
       isItalic = false;
+    } else if (lower.startsWith('<u') && !lower.startsWith('</u')) {
+      isUnderline = true;
+    } else if (lower.startsWith('</u')) {
+      isUnderline = false;
     } else if (lower.startsWith('<font') || lower.startsWith('<c') || lower.startsWith('<span')) {
       const matchRgb = part.match(/color=["']?rgb\((\d+),\s*(\d+),\s*(\d+)\)["']?/i);
+      const matchHex = part.match(/color=["']?#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})["']?/i);
       const matchCat = part.match(/(?:cat|data-cat)=["']?([a-z0-9_-]+)["']?/i);
       if (matchRgb) {
         currentColor = [parseInt(matchRgb[1], 10), parseInt(matchRgb[2], 10), parseInt(matchRgb[3], 10)];
         colorCategory = getColorCategory(currentColor);
-      } else if (matchCat) {
+      } else if (matchHex) {
+        currentColor = [parseInt(matchHex[1], 16), parseInt(matchHex[2], 16), parseInt(matchHex[3], 16)];
+        colorCategory = getColorCategory(currentColor);
+      }
+      if (matchCat) {
         colorCategory = matchCat[1];
       }
     } else if (lower.startsWith('</font') || lower.startsWith('</c') || lower.startsWith('</span')) {
@@ -1189,6 +1269,7 @@ function extractStyledTokensHelper(text) {
             norm: (w || '').replace(/[–—−‑]/g, '-').toLowerCase().replace(/^[^\w]+|[^\w]+$/g, ''),
             isBold,
             isItalic,
+            isUnderline,
             color: currentColor,
             colorCategory,
             isSymbolOnly,
@@ -1574,9 +1655,17 @@ function isOcrWordMatch(normA, normB) {
     if (/^(?:nol|ot|nt|no)$/i.test(normB)) return true;
   }
 
-  // Length 4-5 words (e.g. 'with' vs 'wih', 'from' vs 'fom', 'sleep' vs 'sloop', 'safer' vs 'sar', 'while' vs 'whi')
-  if (normA.length <= 5 && normB.length <= 5) {
-    if (levenshteinDist(normA, normB) <= 2) return true;
+  // Grammatical substitutions and distinct words must NEVER match as OCR slips
+  if ((normA === 'has' && normB === 'have') || (normA === 'have' && normB === 'has')) return false;
+  if ((normA === 'is' && normB === 'are') || (normA === 'are' && normB === 'is')) return false;
+  if ((normA === 'was' && normB === 'were') || (normA === 'were' && normB === 'was')) return false;
+  if ((normA === 'in' && normB === 'on') || (normA === 'on' && normB === 'in')) return false;
+  if ((normA === 'more' && normB === 'most') || (normA === 'most' && normB === 'more')) return false;
+
+  // Length 4-5 words (e.g. 'with' vs 'wih', 'from' vs 'fom', 'sleep' vs 'sloop')
+  // Allow at most 1 character typo/drop for short 4-5 letter words
+  if (normA.length >= 4 && normA.length <= 5 && normB.length >= 3 && normB.length <= 5) {
+    if (levenshteinDist(normA, normB) <= 1) return true;
   }
 
   // Medical abbreviations & Latin phrases (e.g. 'e.g.' -> 'eg', OCR noise: '¢9', 'e9', 'c9', '9', 'cg')
@@ -1651,7 +1740,7 @@ function hasDifferentNumbers(ct, bt) {
 function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
   const M = bTokens.length;
   const N = cSlice.length;
-  if (M === 0) return { consumedCount: 0, issues: [], wordErrors: [] };
+  if (M === 0) return { consumedCount: 0, issues: [], wordErrors: [], formattingErrors: [] };
   if (N === 0) {
     const issues = [];
     const wordErrors = [];
@@ -1671,7 +1760,7 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
         bEndIdx: bIdx + 1,
       });
     });
-    return { consumedCount: 0, issues, wordErrors };
+    return { consumedCount: 0, issues, wordErrors, formattingErrors: [] };
   }
 
   const dp = Array.from({ length: M + 1 }, () => new Int32Array(N + 1));
@@ -1729,11 +1818,64 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
 
   const issues = [];
   const wordErrors = [];
+  const formattingErrors = [];
 
   for (const pair of alignedPairs) {
     const { bt, ct, bIdx } = pair;
     if (!bt) continue;
-    if (pair.match) continue;
+
+    if (pair.match) {
+      // User Requirement 3 & 4: Independent formatting check on verified matching text
+      if (ct) {
+        // 1. Check bold / italic / underline styling
+        const isBoldA = !!ct.isBold;
+        const isBoldB = !!bt.isBold;
+        const isItalicA = !!ct.isItalic;
+        const isItalicB = !!bt.isItalic;
+        const isUnderlineA = !!ct.isUnderline;
+        const isUnderlineB = !!bt.isUnderline;
+
+        if (isBoldA !== isBoldB || isItalicA !== isItalicB || isUnderlineA !== isUnderlineB) {
+          const expStyle = getStyleLabel(isBoldA, isItalicA, isUnderlineA);
+          const foundStyle = getStyleLabel(isBoldB, isItalicB, isUnderlineB);
+          const issueMsg = `Expected ${expStyle} text; found ${foundStyle}.`;
+          formattingErrors.push({
+            word: bt.raw,
+            clean: bt.clean,
+            expected: expStyle,
+            found: foundStyle,
+            issue: issueMsg,
+            details: issueMsg,
+            type: 'style_mismatch',
+            category: isUnderlineA !== isUnderlineB ? 'Formatting (Underline)' : 'Formatting (Bold / Italic)',
+            bStartIdx: bIdx,
+            bEndIdx: bIdx + 1,
+          });
+        }
+
+        // 2. Check font color
+        if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
+          const expColor = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard');
+          const foundColor = (bt.colorCategory === 'black' || !bt.colorCategory ? 'black' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'custom color');
+          const issueMsg = `Expected ${expColor} text; found ${foundColor}.`;
+          formattingErrors.push({
+            word: bt.raw,
+            clean: bt.clean,
+            expected: expColor,
+            found: foundColor,
+            expectedColorName: expColor,
+            foundColorName: foundColor,
+            issue: issueMsg,
+            details: issueMsg,
+            type: 'color_mismatch',
+            category: 'Formatting (Color)',
+            bStartIdx: bIdx,
+            bEndIdx: bIdx + 1,
+          });
+        }
+      }
+      continue;
+    }
 
     if (ct && hasDifferentNumbers(ct, bt)) {
       const issueMsg = `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
@@ -1752,6 +1894,25 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
 
     const stripB = stripAlphanum(bt.raw);
     const cleanB = (bt.clean || '').toLowerCase();
+
+    // If there is an expected token ct, this is a real word substitution (e.g. "has" vs "have")!
+    // NEVER ignore substitutions just because cleanB is in STOP_WORDS!
+    if (ct) {
+      const expText = ct.raw;
+      const issueMsg = `Word Mistake: Found "${bt.raw}", expected "${ct.raw}"`;
+      issues.push(issueMsg);
+      wordErrors.push({
+        word: bt.raw,
+        clean: bt.clean,
+        expected: expText,
+        issue: issueMsg,
+        type: 'word_changed',
+        bStartIdx: bIdx,
+        bEndIdx: bIdx + 1,
+      });
+      continue;
+    }
+
     if (STOP_WORDS.has(cleanB) || STOP_WORDS.has(stripB)) {
       continue;
     }
@@ -1759,24 +1920,27 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
       continue;
     }
 
-    const expText = ct ? ct.raw : '(none)';
-    const issueMsg = ct ? `Word Mistake: Found "${bt.raw}", expected "${ct.raw}"` : `Extra Word: "${bt.raw}"`;
+    const expText = '(none)';
+    const issueMsg = `Extra Word: "${bt.raw}"`;
     issues.push(issueMsg);
     wordErrors.push({
       word: bt.raw,
       clean: bt.clean,
       expected: expText,
       issue: issueMsg,
-      type: ct ? 'word_changed' : 'extra_word',
+      type: 'extra_word',
       bStartIdx: bIdx,
       bEndIdx: bIdx + 1,
     });
   }
 
+  const groupedFormattingErrors = groupConsecutiveFormattingErrors(formattingErrors);
+
   return {
     consumedCount: bestJ,
     issues,
     wordErrors,
+    formattingErrors: groupedFormattingErrors,
   };
 }
 
@@ -2163,6 +2327,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     tokenCursor += alignmentRes.consumedCount;
     issues.push(...alignmentRes.issues);
     wordErrors.push(...alignmentRes.wordErrors);
+    const formattingErrors = alignmentRes.formattingErrors || [];
 
     cCursor = tokenCursor;
     lastConsumedRefLine = canonicalTokens[tokenCursor - 1]?.refLineIndex ?? currRefLine;
@@ -2184,9 +2349,35 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
     const targetLineText = linesA[currRefLine]?.clean || '';
 
-    // Requirement 4 & 5: Complete line match -> highlight entire line in green
-    // Requirement 6: If line has localized word discrepancies -> render line in green with wordErrors in red
-    if (issues.length === 0) {
+    // Requirement 1 & 2: Check missing punctuation (e.g. missing full stop at end of statement/bullet)
+    const targetEndsWithPeriod = /\.\s*$/.test(targetLineText);
+    const lineEndsWithPeriod = /[.!?]\s*$/.test(cleanLine);
+    const isEndOfBlock = !nextLineObj || /^[•\-\*]/.test(nextLineClean) || /^[A-Z\s]{4,}:?$/.test(nextLineClean) || /Important Safety Information/i.test(nextLineClean);
+
+    if (targetEndsWithPeriod && !lineEndsWithPeriod && isEndOfBlock) {
+      const punctIssue = "Missing punctuation: Expected '.' at end of sentence.";
+      issues.push(punctIssue);
+      wordErrors.push({
+        word: lastBToken ? lastBToken.raw : cleanLine,
+        clean: lastBToken ? lastBToken.clean : cleanLine,
+        expected: '.',
+        issue: punctIssue,
+        details: punctIssue,
+        type: 'punctuation',
+        bStartIdx: bTokens.length - 1,
+        bEndIdx: bTokens.length,
+      });
+    }
+
+    // Requirement 3: Decouple wording matches from formatting checks
+    // - Green highlighting means the wording matches the reference master.
+    // - Text that matches PDF A must always remain green, even if formatting (color, bold, italic, underline) differs.
+    // - Red highlighting is reserved strictly for verified text discrepancies.
+    if (wordErrors.length === 0) {
+      const lineComment = formattingErrors.length > 0
+        ? formattingErrors.map((fe) => fe.details).join('; ')
+        : 'Complete line match';
+
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
         lineNum: lIdx + 1,
@@ -2196,16 +2387,18 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         box: lineB.box || null,
         color: 'green',
         status: 'matched',
-        comment: 'Complete line match',
+        comment: lineComment,
         expected: cleanLine,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
         wordErrors: [],
+        formattingErrors,
+        hasFormattingErrors: formattingErrors.length > 0,
       });
     } else {
       const groupedWordErrors = wordErrors;
-      const sortedIssues = groupedWordErrors.map((we) => we.issue);
-      const comment = sortedIssues.length > 0 ? sortedIssues.join('; ') : issues.join('; ');
+      const sortedIssues = groupedWordErrors.map((we) => we.issue || we.details);
+      const comment = sortedIssues.join('; ');
 
       const cleanLineNoPunct = cleanLine.toLowerCase().replace(/^[^\w]+|[^\w]+$/g, '');
       const changedOrExtraCount = groupedWordErrors.filter(
@@ -2224,89 +2417,92 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         raw: lineB.raw || cleanLine,
         page: lineB.page || 1,
         box: lineB.box || null,
-        color: isWholeLineError ? 'red' : 'green', // Green background with localized red/amber word boxes, red line only if entirely replaced
+        color: isWholeLineError ? 'red' : 'green', // Green line background with localized red word boxes; red line only if entirely unapproved
         status: isWholeLineError ? (isMajorityChanged ? 'extra_line' : 'mismatched') : 'matched_with_word_errors',
         hasWordErrors: true,
         comment,
         issues: sortedIssues,
         wordErrors: groupedWordErrors,
+        formattingErrors,
+        hasFormattingErrors: formattingErrors.length > 0,
         expected: isMajorityChanged ? '(none)' : targetLineText,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
       });
 
-      if (groupedWordErrors.length > 0) {
-        for (let wIdx = 0; wIdx < groupedWordErrors.length; wIdx++) {
-          const we = groupedWordErrors[wIdx];
-          const isNum = we.type === 'number';
-          const isMissing = we.type === 'missing_word';
-          const isExtra = we.type === 'extra_word';
+      for (let wIdx = 0; wIdx < groupedWordErrors.length; wIdx++) {
+        const we = groupedWordErrors[wIdx];
+        const isNum = we.type === 'number';
+        const isMissing = we.type === 'missing_word';
+        const isExtra = we.type === 'extra_word';
 
-          let errCategory = 'Word Mistake';
-          if (isNum) errCategory = 'Number Mismatch';
-          else if (isMissing) errCategory = 'Missing Word';
-          else if (isExtra) errCategory = 'Extra Word';
-          else if (we.type === 'spelling') errCategory = 'Spelling Mistake';
-          else if (we.type === 'spacing') errCategory = 'Spacing Difference';
-          else if (we.type === 'formatting') errCategory = 'Bold / Italic Formatting';
-          else if (we.type === 'capitalization') errCategory = 'Capitalization Difference';
-          else if (we.type === 'punctuation') errCategory = 'Punctuation Difference';
+        let errCategory = 'Word Mistake';
+        if (isNum) errCategory = 'Number Mismatch';
+        else if (isMissing) errCategory = 'Missing Word';
+        else if (isExtra) errCategory = 'Extra Word';
+        else if (we.type === 'spelling') errCategory = 'Spelling Mistake';
+        else if (we.type === 'spacing') errCategory = 'Spacing Difference';
+        else if (we.type === 'capitalization') errCategory = 'Capitalization Difference';
+        else if (we.type === 'punctuation') errCategory = 'Punctuation Difference';
 
-          const expDisplay = isExtra
-            ? '(none - extra in PDF)'
-            : (we.expected || '(none)');
-          const foundDisplay = isMissing
-            ? '(missing in PDF)'
-            : (we.word || '(none)');
+        const expDisplay = isExtra
+          ? '(none - extra in PDF)'
+          : (we.expected || '(none)');
+        const foundDisplay = isMissing
+          ? '(missing in PDF)'
+          : (we.word || '(none)');
 
-          mismatchReport.push({
-            index: mismatchReport.length + 1,
-            id: `line_err_${lIdx + 1}_w${wIdx + 1}`,
-            page: lineB.page || 1,
-            section: targetLineText.slice(0, 35) || 'Important Safety Information',
-            originalWordText: expDisplay,
-            pdfText: foundDisplay,
-            errorType: errCategory,
-            severity: isNum || isMissing ? 'critical' : 'high',
-            details: we.issue || comment,
-            isMissingWord: isMissing,
-            isExtraWord: isExtra,
-            lineNum: lIdx + 1,
-          });
-
-          proofreadingErrors.push({
-            id: `proof_err_${lIdx + 1}_w${wIdx + 1}`,
-            category: errCategory,
-            severity: isNum || isMissing ? 'critical' : 'high',
-            expected: expDisplay,
-            found: foundDisplay,
-            details: we.issue || comment,
-          });
-        }
-      } else {
-        const lineCat = isMajorityChanged ? 'Extra Line' : 'Line Discrepancy';
         mismatchReport.push({
           index: mismatchReport.length + 1,
-          id: `line_err_${lIdx + 1}`,
+          id: `line_err_${lIdx + 1}_w${wIdx + 1}`,
           page: lineB.page || 1,
           section: targetLineText.slice(0, 35) || 'Important Safety Information',
-          originalWordText: targetLineText || '(none)',
-          pdfText: cleanLine,
-          errorType: lineCat,
-          severity: 'high',
-          details: comment,
-          isMissingWord: false,
-          isExtraWord: isMajorityChanged,
+          originalWordText: expDisplay,
+          pdfText: foundDisplay,
+          errorType: errCategory,
+          severity: isNum || isMissing ? 'critical' : 'high',
+          details: we.issue || we.details || comment,
+          isMissingWord: isMissing,
+          isExtraWord: isExtra,
           lineNum: lIdx + 1,
         });
 
         proofreadingErrors.push({
-          id: `proof_err_${lIdx + 1}`,
-          category: lineCat,
-          severity: 'high',
-          expected: targetLineText || '(none)',
-          found: cleanLine,
-          details: comment,
+          id: `proof_err_${lIdx + 1}_w${wIdx + 1}`,
+          category: errCategory,
+          severity: isNum || isMissing ? 'critical' : 'high',
+          expected: expDisplay,
+          found: foundDisplay,
+          details: we.issue || we.details || comment,
+        });
+      }
+    }
+
+    // Record formatting errors in mismatchReport and proofreadingErrors
+    if (formattingErrors.length > 0) {
+      for (let fIdx = 0; fIdx < formattingErrors.length; fIdx++) {
+        const fe = formattingErrors[fIdx];
+        mismatchReport.push({
+          index: mismatchReport.length + 1,
+          id: `line_format_${lIdx + 1}_f${fIdx + 1}`,
+          page: lineB.page || 1,
+          section: targetLineText.slice(0, 35) || 'Important Safety Information',
+          originalWordText: fe.expected,
+          pdfText: fe.found,
+          errorType: fe.category,
+          severity: 'medium',
+          details: fe.details,
+          isFormattingError: true,
+          lineNum: lIdx + 1,
+        });
+
+        proofreadingErrors.push({
+          id: `proof_format_${lIdx + 1}_f${fIdx + 1}`,
+          category: fe.category,
+          severity: 'medium',
+          expected: `${fe.expected}: "${fe.word}"`,
+          found: `${fe.found}: "${fe.word}"`,
+          details: fe.details,
         });
       }
     }
@@ -2388,18 +2584,32 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     }
   }
 
+  const colorCount = proofreadingErrors.filter((e) => (e.category || '').toLowerCase().includes('color')).length;
+  const formattingCount = proofreadingErrors.filter((e) => {
+    const cat = (e.category || '').toLowerCase();
+    return cat.includes('format') || cat.includes('bold') || cat.includes('italic') || cat.includes('underline');
+  }).length;
+  const textErrorsCount = proofreadingErrors.filter((e) => {
+    const cat = (e.category || '').toLowerCase();
+    return !cat.includes('format') && !cat.includes('color');
+  }).length;
+
   const errorSummary = {
-    color: 0,
-    colorMismatches: 0,
+    color: colorCount,
+    colorMismatches: colorCount,
     numbers: proofreadingErrors.filter((e) => e.category.includes('Number')).length,
     words: proofreadingErrors.filter((e) => e.category.includes('Word') || e.category.includes('Spelling')).length,
     missingWords: proofreadingErrors.filter((e) => e.category.includes('Missing')).length,
     extraWords: proofreadingErrors.filter((e) => e.category.includes('Extra')).length,
-    capitalization: proofreadingErrors.filter((e) => e.category.includes('Capitalization')).length,
+    capitalization: proofreadingErrors.filter((e) => e.category.includes('Capitalization') || e.category.includes('Case')).length,
     spacing: proofreadingErrors.filter((e) => e.category.includes('Spacing')).length,
     punctuation: proofreadingErrors.filter((e) => e.category.includes('Punctuation')).length,
-    formatting: proofreadingErrors.filter((e) => e.category.includes('Formatting') || e.category.includes('Bold') || e.category.includes('Italic')).length,
+    formatting: formattingCount,
     total: proofreadingErrors.length,
+    // Separate aggregate counts per User Requirement 5
+    textDiscrepanciesCount: textErrorsCount,
+    formattingDiscrepanciesCount: colorCount + formattingCount,
+    verifiedMatchesCount: matchedLines,
   };
 
   const isiAudit = {

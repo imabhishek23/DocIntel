@@ -69,14 +69,27 @@ const CLIENT_STOP_WORDS = new Set([
 
 function isIgnoredWordError(we, expectedText) {
   if (!we || !we.word) return true;
-  if (we.type === 'color' || we.type === 'color_mismatch') return true;
+  // Formatting errors must NEVER be ignored
+  if (we.type === 'color' || we.type === 'color_mismatch' || we.type === 'style_mismatch' || we.type === 'formatting') return false;
+  // Number errors must NEVER be ignored
+  if (we.type === 'number') return false;
+  // Word substitutions (like has vs have) must NEVER be ignored
+  if (we.type === 'word_changed' || we.type === 'spelling') return false;
+  // Punctuation errors must NEVER be ignored
+  if (we.type === 'punctuation' || we.type === 'punctuation_missing') return false;
+
   const cleanWord = we.word.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (!cleanWord) return true;
-  if (we.type !== 'number' && CLIENT_STOP_WORDS.has(cleanWord)) return true;
-  if (expectedText && we.type !== 'number') {
-    const cleanExpected = expectedText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
-    const expWords = new Set(cleanExpected.split(/\s+/).filter(Boolean));
-    if (expWords.has(cleanWord)) return true;
+
+  // Extra words that are stop words and already exist in expected text (line wrap artifact) can be ignored
+  if (we.type === 'extra_word') {
+    if (CLIENT_STOP_WORDS.has(cleanWord)) {
+      if (expectedText) {
+        const cleanExpected = expectedText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+        const expWords = new Set(cleanExpected.split(/\s+/).filter(Boolean));
+        if (expWords.has(cleanWord)) return true;
+      }
+    }
   }
   return false;
 }
@@ -261,9 +274,17 @@ function isOcrWordMatch(normA, normB) {
     if (/^(?:nol|ot|nt|no)$/i.test(normB)) return true;
   }
 
-  // Length 4-5 words (e.g. 'with' vs 'wih', 'from' vs 'fom', 'sleep' vs 'sloop', 'safer' vs 'sar', 'while' vs 'whi')
-  if (normA.length <= 5 && normB.length <= 5) {
-    if (levenshteinDist(normA, normB) <= 2) return true;
+  // Grammatical substitutions and distinct words must NEVER match as OCR slips
+  if ((normA === 'has' && normB === 'have') || (normA === 'have' && normB === 'has')) return false;
+  if ((normA === 'is' && normB === 'are') || (normA === 'are' && normB === 'is')) return false;
+  if ((normA === 'was' && normB === 'were') || (normA === 'were' && normB === 'was')) return false;
+  if ((normA === 'in' && normB === 'on') || (normA === 'on' && normB === 'in')) return false;
+  if ((normA === 'more' && normB === 'most') || (normA === 'most' && normB === 'more')) return false;
+
+  // Length 4-5 words (e.g. 'with' vs 'wih', 'from' vs 'fom', 'sleep' vs 'sloop')
+  // Allow at most 1 character typo/drop for short 4-5 letter words
+  if (normA.length >= 4 && normA.length <= 5 && normB.length >= 3 && normB.length <= 5) {
+    if (levenshteinDist(normA, normB) <= 1) return true;
   }
 
   // Medical abbreviations & Latin phrases (e.g. 'e.g.' -> 'eg', OCR noise: '¢9', 'e9', 'c9', '9', 'cg')
@@ -370,14 +391,19 @@ function computePageHighlights(
         h: Math.max(12, Math.round(Math.abs(rect[3] - rect[1]) / dpr)),
       };
 
-      // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, real changed words) in red! Never mark color errors or approved master words!
+      // User Requirement 3 & 4: Highlight line in green whenever wording matches!
+      // Decouple wording matches from formatting checks:
+      // Red boxes strictly for verified text discrepancies (numbers, word mistakes, missing/extra words).
+      // Amber outlines strictly for formatting discrepancies (color, bold/italic, underline).
       const realWordErrors = (lr.wordErrors || []).filter(
         (we) => !isIgnoredWordError(we, lr.expected)
       );
-      const isMatch = lr.color === 'green' && realWordErrors.length === 0;
+      const formattingErrors = (lr.formattingErrors || []);
+      const isLineMatch = lr.color === 'green';
       const hasWordErrors = realWordErrors.length > 0;
+      const hasFormattingErrors = formattingErrors.length > 0;
 
-      if (isMatch) {
+      if (isLineMatch) {
         directHighlights.push({
           id: `isi_box_match_${lr.lineNum || lr.lineIndex || idx}`,
           index: lr.lineNum || lr.lineIndex || idx,
@@ -388,27 +414,7 @@ function computePageHighlights(
           isError: false,
           color: 'rgba(34, 197, 94, 0.22)',
           borderColor: '#16a34a',
-          comment: 'Approved Match: Identical to approved reference master',
-          category: 'Approved Match',
-          severity: 'low',
-          expected: lr.expected || lr.text,
-          found: lr.found || lr.text,
-          details: 'Complete match with approved reference master',
-          lineResult: lr,
-        });
-      } else if (hasWordErrors) {
-        // User Requirement: Render matching line in green, and highlight ONLY the specific word discrepancy in red/amber!
-        directHighlights.push({
-          id: `isi_box_match_${lr.lineNum || lr.lineIndex || idx}`,
-          index: lr.lineNum || lr.lineIndex || idx,
-          target: lr.text,
-          box: cssBox,
-          boxes: [cssBox],
-          isMatch: true,
-          isError: false,
-          color: 'rgba(34, 197, 94, 0.18)',
-          borderColor: '#16a34a',
-          comment: 'Approved Section: Matched approved reference master',
+          comment: lr.comment || 'Approved Match: Identical to approved reference master',
           category: 'Approved Match',
           severity: 'low',
           expected: lr.expected || lr.text,
@@ -417,20 +423,19 @@ function computePageHighlights(
           lineResult: lr,
         });
 
+        // 1. Localized Red Boxes for Text Discrepancies
         realWordErrors.forEach((we, wIdx) => {
           const weWord = we.word || we.clean;
           if (!weWord) return;
-          const isColorType = we.type === 'color' || we.type === 'color_mismatch';
           const cleanWe = weWord.toLowerCase().replace(/[^a-z0-9]/g, '');
           const cleanExp = (we.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-          if (!isColorType && cleanWe && cleanExp) {
+          if (cleanWe && cleanExp) {
             if (cleanWe === cleanExp || isOcrWordMatch(cleanExp, cleanWe)) return;
             const digitsA = (we.expected || '').match(/\d+(?:\.\d+)?/g)?.join('') || '';
             const digitsB = weWord.match(/\d+(?:\.\d+)?/g)?.join('') || '';
             if (digitsA && digitsB && digitsA === digitsB && (cleanExp.includes(cleanWe) || cleanWe.includes(cleanExp))) return;
           }
 
-          // Use whole-word regex matching so short tokens like "ted" don't match inside "limited"
           let idxInLine = -1;
           try {
             const escapedWord = weWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -439,8 +444,6 @@ function computePageHighlights(
           } catch (_) {
             idxInLine = lr.text.toLowerCase().indexOf(weWord.toLowerCase());
           }
-
-          // If the word does not exist in this line (e.g. missing word), skip drawing a box to avoid misplacing over correct words
           if (idxInLine < 0) return;
 
           const charW = cssBox.w / (lr.text.length || 1);
@@ -454,9 +457,7 @@ function computePageHighlights(
           };
 
           const errCategory =
-            isColorType
-              ? 'Color Mismatch'
-              : we.type === 'number'
+            we.type === 'number'
               ? 'Number Mismatch'
               : we.type === 'missing_word'
               ? 'Missing Word'
@@ -466,17 +467,13 @@ function computePageHighlights(
               ? 'Spelling Mistake'
               : we.type === 'spacing'
               ? 'Spacing Difference'
-              : we.type === 'formatting'
-              ? 'Bold / Italic Formatting'
               : we.type === 'capitalization'
               ? 'Capitalization Difference'
-              : we.type === 'punctuation_missing' || we.type === 'punctuation'
+              : we.type === 'punctuation' || we.type === 'punctuation_missing'
               ? 'Punctuation Difference'
               : 'Word Mistake';
 
-          const colorIssueMsg = isColorType
-            ? (we.issue || `Color Mismatch: Found "${weWord}" in ${we.foundColorName || 'custom color'}, expected ${we.expectedColorName || 'standard (black)'}`)
-            : (we.issue || 'Discrepancy');
+          const issueMsg = we.issue || we.details || `Discrepancy: "${weWord}" (expected "${we.expected}")`;
 
           directHighlights.push({
             id: `isi_box_word_${lr.lineNum || lr.lineIndex || idx}_${wIdx}`,
@@ -487,24 +484,83 @@ function computePageHighlights(
             isMatch: false,
             isError: true,
             isWordDiscrepancy: true,
-            isColorDiff: isColorType,
-            color: isColorType ? 'rgba(245, 158, 11, 0.35)' : 'rgba(239, 68, 68, 0.50)',
-            borderColor: isColorType ? '#d97706' : '#dc2626',
-            comment: colorIssueMsg,
+            color: 'rgba(239, 68, 68, 0.50)',
+            borderColor: '#dc2626',
+            comment: issueMsg,
             category: errCategory,
-            severity: isColorType ? 'medium' : 'high',
-            expected: isColorType ? (we.expectedColorName || we.expected || 'standard (black)') : we.expected,
-            found: isColorType ? (we.foundColorName || weWord || 'custom color') : weWord,
-            details: colorIssueMsg,
+            severity: we.type === 'number' || we.type === 'missing_word' ? 'critical' : 'high',
+            expected: we.expected,
+            found: weWord,
+            details: issueMsg,
             lineResult: lr,
             discrepancy: {
               id: `isi_box_word_${lr.lineNum || lr.lineIndex || idx}_${wIdx}`,
               category: errCategory,
-              type: we.type || (isColorType ? 'color_mismatch' : 'word_mismatch'),
-              severity: isColorType ? 'medium' : 'high',
-              expected: isColorType ? (we.expectedColorName || we.expected || 'standard (black)') : we.expected,
-              found: isColorType ? (we.foundColorName || weWord || 'custom color') : weWord,
-              details: colorIssueMsg,
+              type: we.type || 'word_mismatch',
+              severity: we.type === 'number' || we.type === 'missing_word' ? 'critical' : 'high',
+              expected: we.expected,
+              found: weWord,
+              details: issueMsg,
+            },
+          });
+        });
+
+        // 2. Localized Amber Outlines for Formatting Discrepancies
+        formattingErrors.forEach((fe, fIdx) => {
+          const feWord = fe.word || fe.clean;
+          if (!feWord) return;
+
+          let idxInLine = -1;
+          try {
+            const escapedWord = feWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(lr.text);
+            idxInLine = wordMatch ? wordMatch.index : lr.text.toLowerCase().indexOf(feWord.toLowerCase());
+          } catch (_) {
+            idxInLine = lr.text.toLowerCase().indexOf(feWord.toLowerCase());
+          }
+          if (idxInLine < 0) return;
+
+          const charW = cssBox.w / (lr.text.length || 1);
+          const wordX = Math.round(cssBox.x + idxInLine * charW);
+          const wordW = Math.max(14, Math.round((feWord.length || 3) * charW));
+          const wordBox = {
+            x: wordX,
+            y: Math.max(0, cssBox.y - 1),
+            w: wordW,
+            h: cssBox.h + 2,
+          };
+
+          const isColor = fe.type === 'color_mismatch';
+          const issueMsg = fe.details || fe.issue || `Expected ${fe.expected} text; found ${fe.found}.`;
+
+          directHighlights.push({
+            id: `isi_box_format_${lr.lineNum || lr.lineIndex || idx}_${fIdx}`,
+            index: lr.lineNum || lr.lineIndex || idx,
+            target: feWord,
+            box: wordBox,
+            boxes: [wordBox],
+            isMatch: false,
+            isError: false,
+            isFormattingDiff: true,
+            isColorDiff: isColor,
+            isStyleDiff: !isColor,
+            color: 'rgba(245, 158, 11, 0.35)',
+            borderColor: '#d97706',
+            comment: issueMsg,
+            category: fe.category || (isColor ? 'Formatting (Color)' : 'Formatting (Bold / Italic)'),
+            severity: 'medium',
+            expected: fe.expected,
+            found: fe.found,
+            details: issueMsg,
+            lineResult: lr,
+            discrepancy: {
+              id: `isi_box_format_${lr.lineNum || lr.lineIndex || idx}_${fIdx}`,
+              category: fe.category || (isColor ? 'Formatting (Color)' : 'Formatting (Bold / Italic)'),
+              type: fe.type || 'style_mismatch',
+              severity: 'medium',
+              expected: fe.expected,
+              found: fe.found,
+              details: issueMsg,
             },
           });
         });
@@ -858,6 +914,102 @@ function computePageHighlights(
                   expected: isColorType ? (we.expectedColorName || we.expected || 'standard (black)') : we.expected,
                   found: isColorType ? (we.foundColorName || weWord || 'custom color') : weWord,
                   details: colorIssueMsg,
+                },
+              });
+            }
+          });
+        }
+
+        // Formatting error localized highlights inside this visual line (Amber boxes)
+        const formattingErrors = matchedLr.formattingErrors || [];
+        if (formattingErrors.length > 0) {
+          formattingErrors.forEach((fe, fIdx) => {
+            const feWord = (fe.word || fe.clean || '').trim();
+            if (!feWord) return;
+
+            let wordBox = null;
+            const isColor = fe.type === 'color_mismatch';
+
+            if (pl.lineItems && pl.lineItems.length > 0) {
+              for (const item of pl.lineItems) {
+                const itemStr = (item.str || '').trim();
+                if (itemStr.toLowerCase() === feWord.toLowerCase()) {
+                  wordBox = {
+                    x: Math.round(item.x - 1),
+                    y: Math.round(item.y - 1),
+                    w: Math.max(14, Math.round(item.w + 2)),
+                    h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
+                  };
+                  break;
+                }
+
+                const idxInItem = itemStr.toLowerCase().indexOf(feWord.toLowerCase());
+                if (idxInItem >= 0) {
+                  const charW = item.w / (itemStr.length || 1);
+                  wordBox = {
+                    x: Math.round(item.x + idxInItem * charW - 1),
+                    y: Math.round(item.y - 1),
+                    w: Math.max(14, Math.round(feWord.length * charW + 2)),
+                    h: Math.min(32, Math.max(12, Math.round(item.h + 2))),
+                  };
+                  break;
+                }
+              }
+            }
+
+            if (!wordBox) {
+              let idxInLine = -1;
+              try {
+                const escapedWord = feWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(pl.text);
+                idxInLine = wordMatch ? wordMatch.index : pl.text.toLowerCase().indexOf(feWord.toLowerCase());
+              } catch (_) {
+                idxInLine = pl.text.toLowerCase().indexOf(feWord.toLowerCase());
+              }
+
+              if (idxInLine >= 0) {
+                const charW = safeLineBox.w / (pl.text.length || 1);
+                wordBox = {
+                  x: Math.round(safeLineBox.x + idxInLine * charW - 1),
+                  y: Math.round(safeLineBox.y - 1),
+                  w: Math.max(14, Math.round(feWord.length * charW + 2)),
+                  h: safeLineH,
+                };
+              }
+            }
+
+            if (wordBox) {
+              const issueMsg = fe.details || fe.issue || `Expected ${fe.expected} text; found ${fe.found}.`;
+
+              highlights.push({
+                id: `format_err_${pIdx}_${fIdx}`,
+                index: pIdx,
+                target: feWord,
+                box: wordBox,
+                boxes: [wordBox],
+                isMatch: false,
+                isError: false,
+                isFormattingDiff: true,
+                isColorDiff: isColor,
+                isStyleDiff: !isColor,
+                color: 'rgba(245, 158, 11, 0.35)',
+                borderColor: '#d97706',
+                isWordDiscrepancy: false,
+                category: fe.category || (isColor ? 'Formatting (Color)' : 'Formatting (Bold / Italic)'),
+                severity: 'medium',
+                details: issueMsg,
+                comment: issueMsg,
+                expected: fe.expected,
+                found: fe.found,
+                lineResult: matchedLr,
+                discrepancy: {
+                  id: `format_err_${pIdx}_${fIdx}`,
+                  category: fe.category || (isColor ? 'Formatting (Color)' : 'Formatting (Bold / Italic)'),
+                  type: fe.type || 'formatting_mismatch',
+                  severity: 'medium',
+                  expected: fe.expected,
+                  found: fe.found,
+                  details: issueMsg,
                 },
               });
             }
@@ -1676,61 +1828,68 @@ export default function PdfVisualViewer({
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
-          {isAuditTarget && pageHighlights.length > 0 && (
-            <div className="flex items-center gap-1 bg-white/90 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold">
-              <button
-                type="button"
-                onClick={() => setHighlightFilter('errors')}
-                className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
-                  highlightFilter === 'errors'
-                    ? 'bg-rose-600 text-white shadow-xs'
-                    : 'text-rose-700 hover:bg-rose-100'
-                }`}
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
-                Discrepancies ({pageHighlights.filter((h) => !h.isMatch && !h.isColorDiff && h.category !== 'Color Mismatch').length})
-              </button>
-              {pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length > 0 && (
+          {isAuditTarget && pageHighlights.length > 0 && (() => {
+            const isHlFormatting = (h) => h.isFormattingDiff || h.isColorDiff || h.isStyleDiff || (h.category && h.category.toLowerCase().includes('format')) || h.category === 'Color Mismatch';
+            const textDiscrepanciesCount = pageHighlights.filter((h) => !h.isMatch && !isHlFormatting(h)).length;
+            const formattingCount = pageHighlights.filter((h) => isHlFormatting(h)).length;
+            const matchesCount = pageHighlights.filter((h) => h.isMatch).length;
+
+            return (
+              <div className="flex items-center gap-1 bg-white/90 border border-slate-200 rounded-lg p-0.5 text-[11px] font-bold">
                 <button
                   type="button"
-                  onClick={() => setHighlightFilter('color')}
+                  onClick={() => setHighlightFilter('errors')}
                   className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
-                    highlightFilter === 'color'
-                      ? 'bg-amber-600 text-white shadow-xs'
-                      : 'text-amber-700 hover:bg-amber-100'
+                    highlightFilter === 'errors'
+                      ? 'bg-rose-600 text-white shadow-xs'
+                      : 'text-rose-700 hover:bg-rose-100'
                   }`}
                 >
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                  Color Mismatch ({pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length})
+                  <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+                  Text Discrepancies ({textDiscrepanciesCount})
                 </button>
-              )}
-              {pageHighlights.filter((h) => h.isMatch).length > 0 && (
+                {formattingCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setHighlightFilter('formatting')}
+                    className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
+                      highlightFilter === 'formatting' || highlightFilter === 'color'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-amber-700 hover:bg-amber-100'
+                    }`}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                    Formatting ({formattingCount})
+                  </button>
+                )}
+                {matchesCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setHighlightFilter('matches')}
+                    className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
+                      highlightFilter === 'matches'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'text-emerald-700 hover:bg-emerald-100'
+                    }`}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    Verified Matches ({matchesCount})
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => setHighlightFilter('matches')}
-                  className={`px-2 py-0.5 rounded transition flex items-center gap-1 cursor-pointer ${
-                    highlightFilter === 'matches'
-                      ? 'bg-emerald-600 text-white shadow-xs'
-                      : 'text-emerald-700 hover:bg-emerald-100'
+                  onClick={() => setHighlightFilter('all')}
+                  className={`px-2 py-0.5 rounded transition cursor-pointer ${
+                    highlightFilter === 'all'
+                      ? 'bg-slate-800 text-white shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
                   }`}
                 >
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                  Matches ({pageHighlights.filter((h) => h.isMatch).length})
+                  All ({pageHighlights.length})
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setHighlightFilter('all')}
-                className={`px-2 py-0.5 rounded transition cursor-pointer ${
-                  highlightFilter === 'all'
-                    ? 'bg-slate-800 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                All ({pageHighlights.length})
-              </button>
-            </div>
-          )}
+              </div>
+            );
+          })()}
 
           {totalPages > 1 && (
             <div className="flex items-center gap-1.5 bg-white/80 border border-slate-200 rounded-lg px-2 py-0.5 text-[11px] font-bold text-slate-700">
@@ -1813,24 +1972,30 @@ export default function PdfVisualViewer({
                 >
                   {pageHighlights
                     .filter((hl) => {
-                      if (highlightFilter === 'errors') return !hl.isMatch && !hl.isColorDiff && hl.category !== 'Color Mismatch';
-                      if (highlightFilter === 'color') return hl.isColorDiff || hl.category === 'Color Mismatch';
+                      const isFormatting =
+                        hl.isFormattingDiff ||
+                        hl.isColorDiff ||
+                        hl.isStyleDiff ||
+                        (hl.category && hl.category.toLowerCase().includes('format')) ||
+                        hl.category === 'Color Mismatch';
+
+                      if (highlightFilter === 'errors') return !hl.isMatch && !isFormatting;
+                      if (highlightFilter === 'formatting' || highlightFilter === 'color') return isFormatting;
                       if (highlightFilter === 'matches') return !!hl.isMatch;
                       return true;
                     })
                     .map((hl) => {
                       const isMatch = !!hl.isMatch;
-                      const isColorMismatch =
-                        hl.category === 'Color Mismatch' ||
+                      const isFormatting =
+                        hl.isFormattingDiff ||
                         hl.isColorDiff ||
-                        hl.type === 'color_mismatch' ||
-                        hl.type === 'color' ||
-                        (hl.category && hl.category.toLowerCase().includes('color')) ||
+                        hl.isStyleDiff ||
+                        hl.category === 'Color Mismatch' ||
+                        (hl.category && hl.category.toLowerCase().includes('format')) ||
                         (hl.discrepancy && (
+                          hl.discrepancy.isFormattingError ||
                           hl.discrepancy.category === 'Color Mismatch' ||
-                          hl.discrepancy.type === 'color_mismatch' ||
-                          hl.discrepancy.type === 'color' ||
-                          (hl.discrepancy.category && hl.discrepancy.category.toLowerCase().includes('color'))
+                          (hl.discrepancy.category && hl.discrepancy.category.toLowerCase().includes('format'))
                         ));
 
                       const isSelected = !!(
@@ -1862,7 +2027,7 @@ export default function PdfVisualViewer({
                                   ? isSelected
                                     ? 'border-b-2 border-emerald-600 bg-emerald-300/50 ring-1 ring-emerald-500 z-20'
                                     : 'border-b border-emerald-500/70 bg-emerald-200/35 hover:bg-emerald-300/45 z-10'
-                                  : isColorMismatch
+                                  : isFormatting
                                   ? isSelected
                                     ? 'border-2 border-amber-600 bg-amber-400/60 ring-2 ring-amber-500 z-30 shadow-md'
                                     : 'border-2 border-amber-500 bg-amber-200/45 hover:bg-amber-300/55 ring-1 ring-amber-400/70 shadow-xs z-25 text-amber-950'
@@ -1879,8 +2044,8 @@ export default function PdfVisualViewer({
                                 setSelectedError(isSelected ? null : (hl.discrepancy || hl));
                               }}
                               title={
-                                isColorMismatch
-                                  ? `🎨 Color Mismatch: "${hl.target}" — ${hl.details || hl.comment || 'Color differs from reference master'}`
+                                isFormatting
+                                  ? `${hl.isColorDiff || (hl.category && hl.category.toLowerCase().includes('color')) ? '🎨 Color Mismatch' : '🔤 Formatting'}: "${hl.target}" — ${hl.details || hl.comment || 'Formatting differs from reference master'}`
                                   : hl.isWordDiscrepancy
                                   ? `⚠ ${hl.category}: "${hl.target}" — ${hl.details}`
                                   : hl.isMissingLine
@@ -1896,7 +2061,7 @@ export default function PdfVisualViewer({
                               {!isMatch && (
                                 <span
                                   className={`absolute -top-3 right-0 flex items-center justify-center h-4 px-1.5 rounded-full text-white text-[9px] font-bold shadow-xs whitespace-nowrap pointer-events-none transition-opacity ${
-                                    isColorMismatch
+                                    isFormatting
                                       ? isSelected
                                         ? 'opacity-100 bg-amber-600 ring-1 ring-white'
                                         : 'opacity-95 group-hover:opacity-100 bg-amber-600 ring-1 ring-white shadow-xs'
@@ -1913,8 +2078,8 @@ export default function PdfVisualViewer({
                                       : 'opacity-0 group-hover:opacity-100 bg-rose-600'
                                   }`}
                                 >
-                                  {isColorMismatch
-                                    ? '🎨 Color Mismatch'
+                                  {isFormatting
+                                    ? (hl.isColorDiff || (hl.category && hl.category.toLowerCase().includes('color')) ? '🎨 Color Mismatch' : '🔤 Formatting')
                                     : hl.isWordDiscrepancy
                                     ? `⚠ ${hl.category.replace(' Difference', '').replace(' Mistake', '')}`
                                     : hl.isMissingLine
@@ -1930,9 +2095,9 @@ export default function PdfVisualViewer({
                               {/* Hover Tooltip Card */}
                               <div className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-max max-w-xs p-2.5 rounded-xl bg-slate-900/95 text-white text-[11px] shadow-2xl z-50 pointer-events-none backdrop-blur-xs border border-slate-700 animate-fadeIn">
                                 <div className="flex items-center gap-1.5 font-bold">
-                                  {isColorMismatch ? (
+                                  {isFormatting ? (
                                     <span className="rounded px-1.5 py-0.5 text-[9px] uppercase border font-extrabold bg-amber-500/30 text-amber-200 border-amber-400/40">
-                                      🎨 Color Mismatch
+                                      {hl.isColorDiff || (hl.category && hl.category.toLowerCase().includes('color')) ? '🎨 Color Mismatch' : '🔤 Formatting Difference'}
                                     </span>
                                   ) : isMatch ? (
                                     <span className="rounded px-1.5 py-0.5 text-[9px] uppercase border font-extrabold bg-emerald-500/30 text-emerald-200 border-emerald-400/30">
@@ -1945,16 +2110,16 @@ export default function PdfVisualViewer({
                                   )}
                                 </div>
                                 <div className="text-slate-200 mt-1 leading-snug line-clamp-2">
-                                  {isColorMismatch
-                                    ? hl.details || hl.comment || 'Color Mismatch: Text color differs from approved reference standard.'
+                                  {isFormatting
+                                    ? hl.details || hl.comment || 'Formatting differs from approved reference standard.'
                                     : isMatch
                                     ? `Complete line matches approved reference standard: "${hl.target}"`
                                     : hl.details || hl.comment}
                                 </div>
                                 <div className="flex items-center justify-between text-[9px] text-slate-400 mt-1.5 pt-1 border-t border-slate-800">
                                   <span>
-                                    {isColorMismatch ? (
-                                      <>Expected: <strong className="text-amber-300">{hl.expected || 'standard (black)'}</strong> | Found: <strong className="text-amber-300">{hl.found || 'custom color'}</strong></>
+                                    {isFormatting ? (
+                                      <>Expected: <strong className="text-amber-300">{hl.expected || 'standard'}</strong> | Found: <strong className="text-amber-300">{hl.found || 'custom'}</strong></>
                                     ) : isMatch ? (
                                       <>Status: <strong className="text-emerald-300">Verified Master</strong></>
                                     ) : (
@@ -1985,12 +2150,12 @@ export default function PdfVisualViewer({
               <span>Composite Discrepancy Inspector</span>
               <span className="inline-flex items-center gap-1 rounded-md bg-rose-100 text-rose-900 border border-rose-300 px-1.5 py-0.5 text-[10px] font-bold">
                 <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
-                {discrepancies.filter((d) => d.category !== 'Color Mismatch' && !d.type?.includes('color')).length || discrepancies.length} Discrepancies
+                {discrepancies.filter((d) => !d.isFormattingError && !d.category?.toLowerCase().includes('format') && !d.category?.toLowerCase().includes('color') && !d.type?.includes('color')).length || discrepancies.length} Text Discrepancies
               </span>
-              {(pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length > 0 || discrepancies.filter((d) => d.category === 'Color Mismatch' || d.type?.includes('color')).length > 0) && (
+              {(pageHighlights.filter((h) => h.isFormattingDiff || h.isColorDiff || h.category?.toLowerCase().includes('format') || h.category === 'Color Mismatch').length > 0 || discrepancies.filter((d) => d.isFormattingError || d.category?.toLowerCase().includes('format') || d.category?.toLowerCase().includes('color') || d.type?.includes('color')).length > 0) && (
                 <span className="inline-flex items-center gap-1 rounded-md bg-amber-100 text-amber-900 border border-amber-300 px-1.5 py-0.5 text-[10px] font-bold">
                   <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
-                  {pageHighlights.filter((h) => h.isColorDiff || h.category === 'Color Mismatch').length || discrepancies.filter((d) => d.category === 'Color Mismatch' || d.type?.includes('color')).length} Color Mismatches
+                  {discrepancies.filter((d) => d.isFormattingError || d.category?.toLowerCase().includes('format') || d.category?.toLowerCase().includes('color') || d.type?.includes('color')).length || pageHighlights.filter((h) => h.isFormattingDiff || h.isColorDiff || h.category?.toLowerCase().includes('format') || h.category === 'Color Mismatch').length} Formatting Differences
                 </span>
               )}
             </div>
