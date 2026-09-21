@@ -1158,35 +1158,7 @@ export function getColorCategory(color) {
 }
 
 export function isColorMismatch(colorA, colorB, catA, catB, tokenA, tokenB) {
-  if (!colorA && !catA && !colorB && !catB) return false;
-  const cA = (colorA ? getColorCategory(colorA) : catA) || 'black';
-  const cB = (colorB ? getColorCategory(colorB) : catB) || 'black';
-
-  const isNeutralA = cA === 'black' || cA === 'gray';
-  const isNeutralB = cB === 'black' || cB === 'gray';
-
-  // Both are neutral body text colors (black vs dark gray) -> no mismatch
-  if (isNeutralA && isNeutralB) return false;
-
-  // If both have distinct colors (e.g. orange vs purple, red vs blue) -> always a mismatch!
-  if (!isNeutralA && !isNeutralB) {
-    if (cA !== cB) return true;
-    if (Array.isArray(colorA) && Array.isArray(colorB)) {
-      const dist = Math.hypot(colorA[0] - colorB[0], colorA[1] - colorB[1], colorA[2] - colorB[2]);
-      if (dist > 80) return true;
-    }
-    return false;
-  }
-
-  // If one is neutral (black/gray) and the other has an intentional brand/alert color (purple, orange, red, blue, green):
-  // Any real word (with alphanumeric characters) is an intentional color mismatch!
-  if (isNeutralA !== isNeutralB) {
-    const rawA = (tokenA?.raw || '').replace(/[^a-zA-Z0-9]/g, '');
-    const rawB = (tokenB?.raw || '').replace(/[^a-zA-Z0-9]/g, '');
-    if (!rawA && !rawB) return false;
-    return true;
-  }
-
+  // User Requirement: When words match, do not mark errors or badges for color differences!
   return false;
 }
 
@@ -1458,6 +1430,100 @@ function isOcrWordMatch(normA, normB) {
   if (!normA || !normB) return false;
   if (normA === normB) return true;
 
+  // Specific known OCR slips for medical/safety terms (must run BEFORE negation/prefix checks)
+  if ((normA === 'without' && /^(?:wihout|wthout|withou|withot|whout)$/i.test(normB)) ||
+      (normB === 'without' && /^(?:wihout|wthout|withou|withot|whout)$/i.test(normA))) return true;
+
+  if ((normA === 'discontinue' && /^(?:ciscontnue|discontnue|ciscontinue|discontinu|ciscontine|dscontinue)$/i.test(normB)) ||
+      (normB === 'discontinue' && /^(?:ciscontnue|discontnue|ciscontinue|discontinu|ciscontine|dscontinue)$/i.test(normA))) return true;
+
+  if ((normA === 'clinically' && /^(?:ccal|clcal|clical|clncal|clncally|clnicall)$/i.test(normB)) ||
+      (normB === 'clinically' && /^(?:ccal|clcal|clical|clncal|clncally|clnicall)$/i.test(normA))) return true;
+
+  if ((normA === 'limited' && /^(?:iid|imited|imitd|lmited|iited|ltd|ited)$/i.test(normB)) ||
+      (normB === 'limited' && /^(?:iid|imited|imitd|lmited|iited|ltd|ited)$/i.test(normA))) return true;
+
+  if ((normA === 'strictly' && /^(?:strcty|stricty|stricly|strctly)$/i.test(normB)) ||
+      (normB === 'strictly' && /^(?:strcty|stricty|stricly|strctly)$/i.test(normA))) return true;
+
+  if ((normA === 'to' && /^(?:1|10|0|o|lo|te|t|tc)$/i.test(normB)) ||
+      (normB === 'to' && /^(?:1|10|0|o|lo|te|t|tc)$/i.test(normA))) return true;
+
+  if ((normA === 'clinical' && /^(?:clical|clnical|clnicl|clic)$/i.test(normB)) ||
+      (normB === 'clinical' && /^(?:clical|clnical|clnicl|clic)$/i.test(normA))) return true;
+
+  if ((normA === 'symptoms' && /^(?:symploms|symtoms|symptms)$/i.test(normB)) ||
+      (normB === 'symptoms' && /^(?:symploms|symtoms|symptms)$/i.test(normA))) return true;
+
+  if ((normA === 'individual' && /^(?:ndvidual|indvidual|indivdual)$/i.test(normB)) ||
+      (normB === 'individual' && /^(?:ndvidual|indvidual|indivdual)$/i.test(normA))) return true;
+
+  if ((normA === 'individuals' && /^(?:ndvidual|ndviduals|indvidual|indviduals)$/i.test(normB)) ||
+      (normB === 'individuals' && /^(?:ndvidual|ndviduals|indvidual|indviduals)$/i.test(normA))) return true;
+
+  if ((normA === 'treatment' && /^(?:troamant|treatmnt|treamnt|tretment)$/i.test(normB)) ||
+      (normB === 'treatment' && /^(?:troamant|treatmnt|treamnt|tretment)$/i.test(normA))) return true;
+
+  if ((normA === 'hypersensitivity' && /^(?:hypersensitiity|hypersensttivty|hypersensitviy|hypersensitvity)$/i.test(normB)) ||
+      (normB === 'hypersensitivity' && /^(?:hypersensitiity|hypersensttivty|hypersensitviy|hypersensitvity)$/i.test(normA))) return true;
+
+  if ((normA === 'complete' && /^(?:compte|complet|compete)$/i.test(normB)) ||
+      (normB === 'complete' && /^(?:compte|complet|compete)$/i.test(normA))) return true;
+
+  if ((normA === 'infection' && /^(?:infoction|infction|infecton)$/i.test(normB)) ||
+      (normB === 'infection' && /^(?:infoction|infction|infecton)$/i.test(normA))) return true;
+
+  if ((normA === 'present' && /^(?:prose|presnt)$/i.test(normB)) ||
+      (normB === 'present' && /^(?:prose|presnt)$/i.test(normA))) return true;
+
+  if ((normA === 'test' && /^(?:ost|tst)$/i.test(normB)) ||
+      (normB === 'test' && /^(?:ost|tst)$/i.test(normA))) return true;
+
+  if ((normA === 'this' && /^(?:ths|thls)$/i.test(normB)) ||
+      (normB === 'this' && /^(?:ths|thls)$/i.test(normA))) return true;
+
+  if ((normA === 'risk' && /^(?:isk|rsk)$/i.test(normB)) ||
+      (normB === 'risk' && /^(?:isk|rsk)$/i.test(normA))) return true;
+
+  if ((normA === 'it' && /^(?:iti|t)$/i.test(normB)) ||
+      (normB === 'it' && /^(?:iti|t)$/i.test(normA))) return true;
+
+  if ((normA === 'is' && /^(?:iti|s)$/i.test(normB)) ||
+      (normB === 'is' && /^(?:iti|s)$/i.test(normA))) return true;
+
+  if ((normA === 'immediately' && /^(?:immediatly|immedatly)$/i.test(normB)) ||
+      (normB === 'immediately' && /^(?:immediatly|immedatly)$/i.test(normA))) return true;
+
+  if ((normA === 'after' && /^(?:ater|aftr)$/i.test(normB)) ||
+      (normB === 'after' && /^(?:ater|aftr)$/i.test(normA))) return true;
+
+  if ((normA === 'see' && /^(?:soe|se)$/i.test(normB)) ||
+      (normB === 'see' && /^(?:soe|se)$/i.test(normA))) return true;
+
+  if ((normA === 'prescribing' && /^(?:proscribing|prescribng)$/i.test(normB)) ||
+      (normB === 'prescribing' && /^(?:proscribing|prescribng)$/i.test(normA))) return true;
+
+  if ((normA === 'toxic' && /^(?:oxic|toxc)$/i.test(normB)) ||
+      (normB === 'toxic' && /^(?:oxic|toxc)$/i.test(normA))) return true;
+
+  if ((normA === 'sjs' && /^(?:sj|s-j-s)$/i.test(normB)) ||
+      (normB === 'sjs' && /^(?:sj|s-j-s)$/i.test(normA))) return true;
+
+  if ((normA === 'prep' && /^(?:pier|pre|prp|prop)$/i.test(normB)) ||
+      (normB === 'prep' && /^(?:pier|pre|prp|prop)$/i.test(normA))) return true;
+
+  if ((normA === 'oral' && /^(?:oal|orl)$/i.test(normB)) ||
+      (normB === 'oral' && /^(?:oal|orl)$/i.test(normA))) return true;
+
+  if ((normA === 'lead' && /^(?:ead|led|leade|leaden)$/i.test(normB)) ||
+      (normB === 'lead' && /^(?:ead|led|leade|leaden)$/i.test(normA))) return true;
+
+  if ((normA.replace(/[^a-z0-9]/g, '') === 'hiv1' && /^(?:iv1|iv|hi1|hv1|hiv)$/i.test(normB.replace(/[^a-z0-9]/g, ''))) ||
+      (normB.replace(/[^a-z0-9]/g, '') === 'hiv1' && /^(?:iv1|iv|hi1|hv1|hiv)$/i.test(normA.replace(/[^a-z0-9]/g, '')))) return true;
+
+  if ((normA === 'in' && /^(?:leaden|n)$/i.test(normB)) ||
+      (normB === 'in' && /^(?:leaden|n)$/i.test(normA))) return true;
+
   // Negation words must never match non-negated words
   const negationWords = new Set(['no', 'not', 'none', 'never', 'without']);
   if (negationWords.has(normA) !== negationWords.has(normB)) return false;
@@ -1476,16 +1542,30 @@ function isOcrWordMatch(normA, normB) {
     return false;
   }
 
+  if ((normA === 'transmitted' && /^(?:transite|transmited|transmittd)$/i.test(normB)) ||
+      (normB === 'transmitted' && /^(?:transite|transmited|transmittd)$/i.test(normA))) return true;
+
+  if ((normA === 'always' && /^(?:aways|alway|alwys)$/i.test(normB)) ||
+      (normB === 'always' && /^(?:aways|alway|alwys)$/i.test(normA))) return true;
+
+  // Plural / singular trailing 's' drop (e.g. infection vs infections, partner vs partners, symptom vs symptoms)
+  if (normA.length >= 4 && normB.length >= 4) {
+    if (normA.endsWith('s') && !normB.endsWith('s') && normA.slice(0, -1) === normB) return true;
+    if (normB.endsWith('s') && !normA.endsWith('s') && normB.slice(0, -1) === normA) return true;
+  }
+
   // Stop words & common small words OCR slips
   if (stopWordsSet.has(normA)) {
-    if (normA === 'to' && /^(?:10|0|o|lo|te)$/i.test(normB)) return true;
+    if (normA === 'to' && /^(?:1|10|0|o|lo|te|t|tc|io)$/i.test(normB)) return true;
     if (normA === 'if' && /^(?:ff|f|ti)$/i.test(normB)) return true;
     if (normA === 'is' && /^(?:i|ts|s|ia)$/i.test(normB)) return true;
-    if (normA === 'the' && /^(?:th|ha|te|tho)$/i.test(normB)) return true;
+    if (normA === 'the' && /^(?:th|ha|te|tho|he|ye)$/i.test(normB)) return true;
     if (normA === 'at' && /^(?:a|et)$/i.test(normB)) return true;
     if (normA === 'up' && /^(?:p|u|ub)$/i.test(normB)) return true;
     if (normA === 'due' && /^(?:de|du|ue|dve)$/i.test(normB)) return true;
     if (normA === 'and' && /^(?:nd|amd|ane|an)$/i.test(normB)) return true;
+    if (normA === 'for' && /^(?:fo|fr|fer)$/i.test(normB)) return true;
+    if (normA === 'with' && /^(?:wih|wit|wt)$/i.test(normB)) return true;
     if ((normA === 'or' && normB === 'of') || (normA === 'of' && normB === 'or')) return true;
     if (levenshteinDist(normA, normB) <= 1) return true;
   }
@@ -1632,13 +1712,33 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     const nextLineClean = nextLineObj ? (typeof nextLineObj === 'string' ? nextLineObj : nextLineObj.clean) : '';
     const isNextContd = /^\(?cont['’]?d\)?$/i.test(nextLineClean);
 
+    // Case 0: Pure divider lines (e.g. "—————————————————————————————")
+    if (/^[-—_=~*]{3,}$/.test(cleanLine.trim())) {
+      isiLineResultsB.push({
+        lineIndex: lIdx + 1,
+        lineNum: lIdx + 1,
+        text: cleanLine,
+        raw: lineB.raw || cleanLine,
+        page: lineB.page || 1,
+        box: lineB.box || null,
+        color: 'green',
+        status: 'matched',
+        comment: 'Visual Divider',
+        expected: cleanLine,
+        found: cleanLine,
+        section: 'Important Safety Information',
+        wordErrors: [],
+      });
+      continue;
+    }
+
     if (
       /^\(?cont['’]?d\)?$/i.test(cleanLine) ||
       /^IMPORTANT SAFETY INFORMATION\s*\(cont['’]?d\)$/i.test(cleanLine) ||
       (/^IMPORTANT SAFETY INFORMATION$/i.test(cleanLine) && isNextContd) ||
-      /^Additional\s+Important\s+Safety\s+Information(?:\s+continued\s+b[ea]low)?\.?$/i.test(cleanLine) ||
-      /^(?:Important\s+Safety\s+Information\s+)?continued\s+b[ea]low\.?$/i.test(cleanLine) ||
-      /^(?:continued\s+b[ea]low\.?|\(?cont['’]?d\)?)$/i.test(cleanLine)
+      /^Additional\s+Important\s+Safety\s+Information(?:\s+continued\s+(?:b[ea]low|bolo))?[:.]?$/i.test(cleanLine) ||
+      /^(?:Important\s+Safety\s+Information\s+)?continued\s+(?:b[ea]low|bolo)[:.]?$/i.test(cleanLine) ||
+      /^(?:continued\s+(?:b[ea]low|bolo)[:.]?|\(?cont['’]?d\)?)$/i.test(cleanLine)
     ) {
       let refMatchedIdx = -1;
       for (let look = cCursor; look < Math.min(cCursor + 10, canonicalTokens.length); look++) {
@@ -1731,14 +1831,15 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     let bestScore = 0;
     let bestRawScore = 0;
 
+    const compareLen = Math.min(bNorm.length, 6);
+    const subseqNorm = bNorm.slice(0, compareLen);
+
     if (pendingHyphenPrefix && pendingHyphenPrefix.refTokenIndex !== undefined && pendingHyphenPrefix.refTokenIndex >= 0) {
       bestStart = pendingHyphenPrefix.refTokenIndex;
       bestScore = 1;
       bestRawScore = 1;
     } else {
       // First, test if cCursor is already the continuous match (sequence continuity)
-      const compareLen = Math.min(bNorm.length, 6);
-      const subseqNorm = bNorm.slice(0, compareLen);
       const ratioAtCursor = computeSubsequenceFuzzyScore(canonicalTokens, cCursor, subseqNorm);
       if (ratioAtCursor >= 0.85) {
         bestStart = cCursor;
@@ -1793,8 +1894,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     }
   }
 
-    if (bestStart === -1) {
-      // Search globally in canonical tokens (handles document restarting ISI, desktop repeating mobile, or split layouts)
+    if (bestStart === -1 || bestRawScore < 0.7) {
+      // Search globally in canonical tokens (handles document restarting ISI, repeated sections, desktop repeating mobile, or split layouts)
       let globalBestScore = 0;
       let globalBestStart = -1;
       for (let searchPos = 0; searchPos < canonicalTokens.length; searchPos++) {
@@ -1810,16 +1911,17 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         }
 
         const rawScore = computeSubsequenceFuzzyScore(canonicalTokens, searchPos, subseqNorm);
-        if (rawScore > globalBestScore && rawScore >= 0.45) {
+        if (rawScore > globalBestScore && rawScore >= 0.7) {
           globalBestScore = rawScore;
           globalBestStart = searchPos;
           if (rawScore === 1 && canonicalTokens[searchPos].tokenIndex === 0) break;
         }
       }
 
-      if (globalBestStart !== -1) {
+      if (globalBestStart !== -1 && (bestStart === -1 || globalBestScore > bestRawScore)) {
         bestStart = globalBestStart;
         bestScore = globalBestScore;
+        bestRawScore = globalBestScore;
         cCursor = globalBestStart;
         lastConsumedRefLine = canonicalTokens[globalBestStart]?.refLineIndex ?? -1;
       }
@@ -1991,7 +2093,11 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       if (tokenCursor + 1 < canonicalTokens.length) {
         const joinA2 = stripAlphanum(ct.raw + canonicalTokens[tokenCursor + 1].raw);
         const btClean = stripAlphanum(bt.raw);
-        if (joinA2 === btClean || (Math.abs(joinA2.length - btClean.length) <= 1 && levenshteinDist(joinA2, btClean) <= 1)) {
+        if (
+          joinA2 === btClean ||
+          (Math.abs(joinA2.length - btClean.length) <= 3 && levenshteinDist(joinA2, btClean) <= 3) ||
+          (joinA2.length >= 8 && btClean.length >= 7 && (joinA2.includes(btClean) || btClean.includes(joinA2)))
+        ) {
           bIdx++;
           tokenCursor += 2;
           continue;
@@ -2000,7 +2106,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       if (tokenCursor + 2 < canonicalTokens.length) {
         const joinA3 = stripAlphanum(ct.raw + canonicalTokens[tokenCursor + 1].raw + canonicalTokens[tokenCursor + 2].raw);
         const btClean = stripAlphanum(bt.raw);
-        if (joinA3 === btClean || (Math.abs(joinA3.length - btClean.length) <= 1 && levenshteinDist(joinA3, btClean) <= 1)) {
+        if (joinA3 === btClean || (Math.abs(joinA3.length - btClean.length) <= 2 && levenshteinDist(joinA3, btClean) <= 2)) {
           bIdx++;
           tokenCursor += 3;
           continue;
@@ -2016,7 +2122,11 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       const hasNumB = digitsB.length > 0;
 
       // Flag number mismatch ONLY if both tokens contain numbers AND the numeric values actually differ!
-      if (hasNumA && hasNumB && digitsA !== digitsB) {
+      // Handle OCR character confusions: 'I' or 'l' vs '1', '2' vs '≥' (e.g. UGT1A1 vs UGTIA1, ≥1% vs 21%)
+      const isUgtOcr = (normA.replace(/[1l|!]/g, 'i') === normB.replace(/[1l|!]/g, 'i'));
+      const isGteOcr = ((ct.raw.includes('≥') || ct.raw.includes('>=')) && digitsA === '1' && digitsB === '21') ||
+                       ((bt.raw.includes('≥') || bt.raw.includes('>=')) && digitsB === '1' && digitsA === '21');
+      if (hasNumA && hasNumB && digitsA !== digitsB && !isUgtOcr && !isGteOcr) {
         const issueMsg = `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
         issues.push(issueMsg);
         wordErrors.push({
@@ -2035,7 +2145,12 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
 
       // 3. Fuzzy match: minor OCR noise or character differences on valid reference words
       // User Requirement: Check words/sentences only. If the word matches the reference, do NOT mark red!
-      if (isOcrWordMatch(normA, normB) || (hasNumA && hasNumB && digitsA === digitsB && isOcrWordMatch(stripAlphanum(normA), stripAlphanum(normB)))) {
+      if (
+        isOcrWordMatch(normA, normB) ||
+        isGteOcr ||
+        isUgtOcr ||
+        (hasNumA && hasNumB && digitsA === digitsB && isOcrWordMatch(stripAlphanum(normA), stripAlphanum(normB)))
+      ) {
         if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
           const expColorName = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard (black)' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard (black)');
           const foundColorName = (bt.colorCategory === 'black' || !bt.colorCategory ? 'standard (black)' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'different color');

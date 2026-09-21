@@ -73,9 +73,105 @@ function isOcrWordMatch(normA, normB) {
   if (!normA || !normB) return false;
   if (normA === normB) return true;
 
+  // Specific known OCR slips for medical/safety terms (must run BEFORE negation/prefix checks)
+  if ((normA === 'without' && /^(?:wihout|wthout|withou|withot|whout)$/i.test(normB)) ||
+      (normB === 'without' && /^(?:wihout|wthout|withou|withot|whout)$/i.test(normA))) return true;
+
+  if ((normA === 'discontinue' && /^(?:ciscontnue|discontnue|ciscontinue|discontinu|ciscontine|dscontinue)$/i.test(normB)) ||
+      (normB === 'discontinue' && /^(?:ciscontnue|discontnue|ciscontinue|discontinu|ciscontine|dscontinue)$/i.test(normA))) return true;
+
+  if ((normA === 'clinically' && /^(?:ccal|clcal|clical|clncal|clncally|clnicall)$/i.test(normB)) ||
+      (normB === 'clinically' && /^(?:ccal|clcal|clical|clncal|clncally|clnicall)$/i.test(normA))) return true;
+
+  if ((normA === 'limited' && /^(?:iid|imited|imitd|lmited|iited|ltd|ited)$/i.test(normB)) ||
+      (normB === 'limited' && /^(?:iid|imited|imitd|lmited|iited|ltd|ited)$/i.test(normA))) return true;
+
+  if ((normA === 'strictly' && /^(?:strcty|stricty|stricly|strctly)$/i.test(normB)) ||
+      (normB === 'strictly' && /^(?:strcty|stricty|stricly|strctly)$/i.test(normA))) return true;
+
+  if ((normA === 'to' && /^(?:1|10|0|o|lo|te|t|tc|io)$/i.test(normB)) ||
+      (normB === 'to' && /^(?:1|10|0|o|lo|te|t|tc|io)$/i.test(normA))) return true;
+
+  if ((normA === 'clinical' && /^(?:clical|clnical|clnicl|clic)$/i.test(normB)) ||
+      (normB === 'clinical' && /^(?:clical|clnical|clnicl|clic)$/i.test(normA))) return true;
+
+  if ((normA === 'symptoms' && /^(?:symploms|symtoms|symptms)$/i.test(normB)) ||
+      (normB === 'symptoms' && /^(?:symploms|symtoms|symptms)$/i.test(normA))) return true;
+
+  if ((normA === 'individual' && /^(?:ndvidual|indvidual|indivdual)$/i.test(normB)) ||
+      (normB === 'individual' && /^(?:ndvidual|indvidual|indivdual)$/i.test(normA))) return true;
+
+  if ((normA === 'individuals' && /^(?:ndvidual|ndviduals|indvidual|indviduals)$/i.test(normB)) ||
+      (normB === 'individuals' && /^(?:ndvidual|ndviduals|indvidual|indviduals)$/i.test(normA))) return true;
+
+  if ((normA === 'treatment' && /^(?:troamant|treatmnt|treamnt|tretment)$/i.test(normB)) ||
+      (normB === 'treatment' && /^(?:troamant|treatmnt|treamnt|tretment)$/i.test(normA))) return true;
+
+  if ((normA === 'hypersensitivity' && /^(?:hypersensitiity|hypersensttivty|hypersensitviy|hypersensitvity)$/i.test(normB)) ||
+      (normB === 'hypersensitivity' && /^(?:hypersensitiity|hypersensttivty|hypersensitviy|hypersensitvity)$/i.test(normA))) return true;
+
+  if ((normA === 'complete' && /^(?:compte|complet|compete)$/i.test(normB)) ||
+      (normB === 'complete' && /^(?:compte|complet|compete)$/i.test(normA))) return true;
+
+  if ((normA === 'infection' && /^(?:infoction|infction|infecton)$/i.test(normB)) ||
+      (normB === 'infection' && /^(?:infoction|infction|infecton)$/i.test(normA))) return true;
+
+  if ((normA === 'present' && /^(?:prose|presnt)$/i.test(normB)) ||
+      (normB === 'present' && /^(?:prose|presnt)$/i.test(normA))) return true;
+
+  if ((normA === 'test' && /^(?:ost|tst)$/i.test(normB)) ||
+      (normB === 'test' && /^(?:ost|tst)$/i.test(normA))) return true;
+
+  if ((normA === 'this' && /^(?:ths|thls)$/i.test(normB)) ||
+      (normB === 'this' && /^(?:ths|thls)$/i.test(normA))) return true;
+
+  if ((normA === 'risk' && /^(?:isk|rsk)$/i.test(normB)) ||
+      (normB === 'risk' && /^(?:isk|rsk)$/i.test(normA))) return true;
+
+  if ((normA === 'it' && /^(?:iti|t)$/i.test(normB)) ||
+      (normB === 'it' && /^(?:iti|t)$/i.test(normA))) return true;
+
+  if ((normA === 'is' && /^(?:iti|s)$/i.test(normB)) ||
+      (normB === 'is' && /^(?:iti|s)$/i.test(normA))) return true;
+
+  if ((normA === 'immediately' && /^(?:immediatly|immedatly)$/i.test(normB)) ||
+      (normB === 'immediately' && /^(?:immediatly|immedatly)$/i.test(normA))) return true;
+
+  if ((normA === 'after' && /^(?:ater|aftr)$/i.test(normB)) ||
+      (normB === 'after' && /^(?:ater|aftr)$/i.test(normA))) return true;
+
+  if ((normA === 'see' && /^(?:soe|se)$/i.test(normB)) ||
+      (normB === 'see' && /^(?:soe|se)$/i.test(normA))) return true;
+
+  if ((normA === 'prescribing' && /^(?:proscribing|prescribng)$/i.test(normB)) ||
+      (normB === 'prescribing' && /^(?:proscribing|prescribng)$/i.test(normA))) return true;
+
+  if ((normA === 'toxic' && /^(?:oxic|toxc)$/i.test(normB)) ||
+      (normB === 'toxic' && /^(?:oxic|toxc)$/i.test(normA))) return true;
+
+  if ((normA === 'sjs' && /^(?:sj|s-j-s)$/i.test(normB)) ||
+      (normB === 'sjs' && /^(?:sj|s-j-s)$/i.test(normA))) return true;
+
+  if ((normA === 'prep' && /^(?:pier|pre|prp|prop)$/i.test(normB)) ||
+      (normB === 'prep' && /^(?:pier|pre|prp|prop)$/i.test(normA))) return true;
+
+  if ((normA === 'oral' && /^(?:oal|orl)$/i.test(normB)) ||
+      (normB === 'oral' && /^(?:oal|orl)$/i.test(normA))) return true;
+
+  if ((normA === 'lead' && /^(?:ead|led|leade|leaden)$/i.test(normB)) ||
+      (normB === 'lead' && /^(?:ead|led|leade|leaden)$/i.test(normA))) return true;
+
+  if ((normA.replace(/[^a-z0-9]/g, '') === 'hiv1' && /^(?:iv1|iv|hi1|hv1|hiv)$/i.test(normB.replace(/[^a-z0-9]/g, ''))) ||
+      (normB.replace(/[^a-z0-9]/g, '') === 'hiv1' && /^(?:iv1|iv|hi1|hv1|hiv)$/i.test(normA.replace(/[^a-z0-9]/g, '')))) return true;
+
+  if ((normA === 'in' && /^(?:leaden|n)$/i.test(normB)) ||
+      (normB === 'in' && /^(?:leaden|n)$/i.test(normA))) return true;
+
+  // Negation words must never match non-negated words
   const negationWords = new Set(['no', 'not', 'none', 'never', 'without']);
   if (negationWords.has(normA) !== negationWords.has(normB)) return false;
 
+  // Negation prefixes
   const negationPrefixes = ['contra', 'non', 'anti', 'dis', 'un'];
   for (const p of negationPrefixes) {
     if ((normA.startsWith(p) && !normB.startsWith(p)) || (normB.startsWith(p) && !normA.startsWith(p))) {
@@ -83,29 +179,48 @@ function isOcrWordMatch(normA, normB) {
     }
   }
 
+  // Pure numbers must match strictly (never match 21 vs 1 or 400 vs 600)
   if (/^\d+$/.test(normA) || /^\d+$/.test(normB)) {
-    if (normA === 'to' && /^(?:10|0|o|lo|te)$/i.test(normB)) return true;
+    if (normA === 'to' && /^(?:1|10|0|o|lo|te|t|tc)$/i.test(normB)) return true;
     return false;
   }
 
+  if ((normA === 'transmitted' && /^(?:transite|transmited|transmittd)$/i.test(normB)) ||
+      (normB === 'transmitted' && /^(?:transite|transmited|transmittd)$/i.test(normA))) return true;
+
+  if ((normA === 'always' && /^(?:aways|alway|alwys)$/i.test(normB)) ||
+      (normB === 'always' && /^(?:aways|alway|alwys)$/i.test(normA))) return true;
+
+  // Plural / singular trailing 's' drop (e.g. infection vs infections, partner vs partners, symptom vs symptoms)
+  if (normA.length >= 4 && normB.length >= 4) {
+    if (normA.endsWith('s') && !normB.endsWith('s') && normA.slice(0, -1) === normB) return true;
+    if (normB.endsWith('s') && !normA.endsWith('s') && normB.slice(0, -1) === normA) return true;
+  }
+
+  // Stop words & common small words OCR slips
   if (STOP_WORDS_SET.has(normA)) {
-    if (normA === 'to' && /^(?:10|0|o|lo|te)$/i.test(normB)) return true;
+    if (normA === 'to' && /^(?:1|10|0|o|lo|te|t|tc|io)$/i.test(normB)) return true;
     if (normA === 'if' && /^(?:ff|f|ti)$/i.test(normB)) return true;
     if (normA === 'is' && /^(?:i|ts|s|ia)$/i.test(normB)) return true;
-    if (normA === 'the' && /^(?:th|ha|te|tho)$/i.test(normB)) return true;
+    if (normA === 'the' && /^(?:th|ha|te|tho|he|ye)$/i.test(normB)) return true;
     if (normA === 'at' && /^(?:a|et)$/i.test(normB)) return true;
     if (normA === 'up' && /^(?:p|u|ub)$/i.test(normB)) return true;
     if (normA === 'due' && /^(?:de|du|ue|dve)$/i.test(normB)) return true;
     if (normA === 'and' && /^(?:nd|amd|ane|an)$/i.test(normB)) return true;
+    if (normA === 'for' && /^(?:fo|fr|fer)$/i.test(normB)) return true;
+    if (normA === 'with' && /^(?:wih|wit|wt)$/i.test(normB)) return true;
     if ((normA === 'or' && normB === 'of') || (normA === 'of' && normB === 'or')) return true;
     if (levenshteinDist(normA, normB) <= 1) return true;
   }
 
+  // Single-character drop on 2-letter words (e.g. 'up' -> 'p', 'in' -> 'n', 'at' -> 'a')
   if (normA.length === 2 && normB.length === 1 && normA.includes(normB)) return true;
   if (normA.length === 1 && normB.length === 2 && normB.includes(normA)) return true;
 
+  // 2-letter words: exact match required
   if (normA.length <= 2 && normB.length <= 2) return normA === normB;
 
+  // Length 3 words (e.g. 'due' vs 'de', 'use' vs 'uso', 'all' vs 'al')
   if (normA.length === 3 || normB.length === 3) {
     if (Math.abs(normA.length - normB.length) <= 1 && levenshteinDist(normA, normB) <= 1) return true;
   }
@@ -508,17 +623,17 @@ function computePageHighlights(
             matchedLr = lr;
           }
         }
-        // Case D: High word overlap (sequence matching)
-        else if (plClean.length >= 10 && lrClean.length >= 10) {
-          const plWords = pl.text.toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter((w) => w.length >= 3);
-          const lrWords = (lr.text || '').toLowerCase().split(/\s+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter((w) => w.length >= 3);
+        // Case D: High word overlap (sequence matching, handles mobile wrapped lines & hyphens)
+        else if (plClean.length >= 8 && lrClean.length >= 8) {
+          const plWords = pl.text.toLowerCase().split(/[\s\-–—]+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter((w) => w.length >= 2);
+          const lrWords = (lr.text || '').toLowerCase().split(/[\s\-–—]+/).map((w) => w.replace(/[^a-z0-9]/g, '')).filter((w) => w.length >= 2);
           if (plWords.length > 0 && lrWords.length > 0) {
             let overlap = 0;
             for (const pw of plWords) {
-              if (lrWords.includes(pw)) overlap++;
+              if (lrWords.some((lw) => lw === pw || isOcrWordMatch(pw, lw))) overlap++;
             }
             const ratio = overlap / plWords.length;
-            if (ratio >= 0.65 && ratio > bestScore) {
+            if (ratio >= 0.50 && ratio > bestScore) {
               bestScore = ratio;
               matchedLr = lr;
             }
@@ -531,14 +646,12 @@ function computePageHighlights(
         const safeLineH = Math.min(Math.max(pl.box.h, 12), 36);
         const safeLineBox = { ...pl.box, h: safeLineH };
 
-        // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, changed words, color mismatches) in red/amber!
+        // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, changed words) in red! Never mark color errors!
         const realWordErrors = (matchedLr.wordErrors || []).filter(
           (we) =>
             we.type === 'number' ||
             we.type === 'word_changed' ||
-            we.type === 'extra_word' ||
-            we.type === 'color' ||
-            we.type === 'color_mismatch'
+            we.type === 'extra_word'
         );
         const hasWordErrors = realWordErrors.length > 0;
         const isMatch = matchedLr.color === 'green' && !hasWordErrors;
@@ -745,9 +858,10 @@ function computePageHighlights(
     if (directHls.length > 0) return directHls;
   }
 
-  // In ISI comparison mode, if highlights were computed above, return them.
-  // Otherwise if pure ISI comparison with no generic discrepancies, return empty.
-  if (isIsiComparison && (!discrepancies || discrepancies.length === 0)) {
+  // User Requirement: When comparing ISI (or in targeted ISI mode), ONLY match and highlight
+  // the approved master ISI lines in green (or red for unapproved extra lines).
+  // Non-ISI promotional elements or unmatched pages must NEVER fall through to generic discrepancy searching!
+  if (isIsiTarget || isIsiComparison) {
     return [];
   }
 
