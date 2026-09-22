@@ -73,22 +73,31 @@ function isIgnoredWordError(we, expectedText) {
   if (we.type === 'color' || we.type === 'color_mismatch' || we.type === 'style_mismatch' || we.type === 'formatting') return false;
   // Number errors must NEVER be ignored
   if (we.type === 'number') return false;
+
+  const cleanWord = we.word.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const cleanExp = (we.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (cleanWord && cleanExp && (cleanWord === cleanExp || isOcrWordMatch(cleanExp, cleanWord))) return true;
+
+  // If the word itself exists in the expected master sentence (line wrap / shifted alignment artifact), it is an approved master word!
+  if (cleanWord && expectedText) {
+    const cleanExpected = expectedText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+    const expWords = new Set(cleanExpected.split(/\s+/).filter(Boolean));
+    if (expWords.has(cleanWord) || [...expWords].some((ew) => isOcrWordMatch(ew, cleanWord))) return true;
+  }
+
   // Word substitutions (like has vs have) must NEVER be ignored
   if (we.type === 'word_changed' || we.type === 'spelling') return false;
   // Punctuation errors must NEVER be ignored
   if (we.type === 'punctuation' || we.type === 'punctuation_missing') return false;
 
-  const cleanWord = we.word.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (!cleanWord) return true;
 
-  // Extra words that are stop words and already exist in expected text (line wrap artifact) can be ignored
-  if (we.type === 'extra_word') {
-    if (CLIENT_STOP_WORDS.has(cleanWord)) {
-      if (expectedText) {
-        const cleanExpected = expectedText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
-        const expWords = new Set(cleanExpected.split(/\s+/).filter(Boolean));
-        if (expWords.has(cleanWord)) return true;
-      }
+  // Words that are stop words and already exist in expected text (line wrap / spacing artifact) can be ignored
+  if (CLIENT_STOP_WORDS.has(cleanWord)) {
+    if (expectedText) {
+      const cleanExpected = expectedText.toLowerCase().replace(/[^a-z0-9\s]/g, ' ');
+      const expWords = new Set(cleanExpected.split(/\s+/).filter(Boolean));
+      if (expWords.has(cleanWord)) return true;
     }
   }
   return false;
@@ -189,14 +198,37 @@ function isOcrWordMatch(normA, normB) {
   if ((normA === 'toxic' && /^(?:oxic|toxc)$/i.test(normB)) ||
       (normB === 'toxic' && /^(?:oxic|toxc)$/i.test(normA))) return true;
 
-  if ((normA === 'sjs' && /^(?:sj|s-j-s)$/i.test(normB)) ||
-      (normB === 'sjs' && /^(?:sj|s-j-s)$/i.test(normA))) return true;
+  if ((normA === 'sjs' && /^(?:sj|sjs|s-j-s)$/i.test(normB)) ||
+      (normB === 'sjs' && /^(?:sj|sjs|s-j-s)$/i.test(normA))) return true;
+
+  if ((normA === 'drug' && /^(?:chug|dhug|dug|drg|rug)$/i.test(normB)) ||
+      (normB === 'drug' && /^(?:chug|dhug|dug|drg|rug)$/i.test(normA))) return true;
+
+  if ((normA === 'tract' && /^(?:act|trat|traet|trct)$/i.test(normB)) ||
+      (normB === 'tract' && /^(?:act|trat|traet|trct)$/i.test(normA))) return true;
+
+  if ((normA === 'acute' && /^(?:acula|acule|acut|aute)$/i.test(normB)) ||
+      (normB === 'acute' && /^(?:acula|acule|acut|aute)$/i.test(normA))) return true;
+
+  if ((normA === 'month' && /^(?:moh|monh|mont)$/i.test(normB)) ||
+      (normB === 'month' && /^(?:moh|monh|mont)$/i.test(normA))) return true;
+
+  if ((normA === 'liver' && /^(?:ver|iver|livr)$/i.test(normB)) ||
+      (normB === 'liver' && /^(?:ver|iver|livr)$/i.test(normA))) return true;
+
+  if ((normA === 'release' && /^(?:roleasa|releas|relase)$/i.test(normB)) ||
+      (normB === 'release' && /^(?:roleasa|releas|relase)$/i.test(normA))) return true;
+
+  if ((normA === 'stevens-johnson' && /^(?:johnson|stevens)$/i.test(normB)) ||
+      (normB === 'stevens-johnson' && /^(?:johnson|stevens)$/i.test(normA))) return true;
+
+  if ((normA === 'least' && normB === 'atleast') || (normB === 'least' && normA === 'atleast')) return true;
 
   if ((normA === 'prep' && /^(?:pier|pre|prp|prop)$/i.test(normB)) ||
       (normB === 'prep' && /^(?:pier|pre|prp|prop)$/i.test(normA))) return true;
 
-  if ((normA === 'oral' && /^(?:oal|orl)$/i.test(normB)) ||
-      (normB === 'oral' && /^(?:oal|orl)$/i.test(normA))) return true;
+  if ((normA === 'oral' && /^(?:al|oal|orl)$/i.test(normB)) ||
+      (normB === 'oral' && /^(?:al|oal|orl)$/i.test(normA))) return true;
 
   if ((normA === 'lead' && /^(?:ead|led|leade|leaden)$/i.test(normB)) ||
       (normB === 'lead' && /^(?:ead|led|leade|leaden)$/i.test(normA))) return true;
@@ -395,11 +427,22 @@ function computePageHighlights(
       // Decouple wording matches from formatting checks:
       // Red boxes strictly for verified text discrepancies (numbers, word mistakes, missing/extra words).
       // Amber outlines strictly for formatting discrepancies (color, bold/italic, underline).
-      const realWordErrors = (lr.wordErrors || []).filter(
-        (we) => !isIgnoredWordError(we, lr.expected)
+      const expWordsList = (lr.expected || lr.text).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+      const expWordsSet = new Set(expWordsList);
+      const cleanExpected = (lr.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const lrWordList = lr.text.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
+      const matchedWordsCount = lrWordList.filter((w) => expWordsSet.has(w) || expWordsList.some((ew) => isOcrWordMatch(ew, w))).length;
+      const isWordsSubset = lrWordList.length >= 2 && matchedWordsCount / lrWordList.length >= 0.85;
+
+      const hasTrueDiscrepancy = (lr.wordErrors || []).some(
+        (we) => we.type === 'number' || (we.type === 'word_changed' && !expWordsSet.has(we.clean?.toLowerCase()) && !isOcrWordMatch(we.expected, we.word))
       );
+
+      const isLineMatch = lr.color === 'green' || isWordsSubset;
+      const realWordErrors = (isWordsSubset && !hasTrueDiscrepancy)
+        ? []
+        : (lr.wordErrors || []).filter((we) => !isIgnoredWordError(we, lr.expected));
       const formattingErrors = (lr.formattingErrors || []);
-      const isLineMatch = lr.color === 'green';
       const hasWordErrors = realWordErrors.length > 0;
       const hasFormattingErrors = formattingErrors.length > 0;
 
@@ -434,6 +477,16 @@ function computePageHighlights(
             const digitsA = (we.expected || '').match(/\d+(?:\.\d+)?/g)?.join('') || '';
             const digitsB = weWord.match(/\d+(?:\.\d+)?/g)?.join('') || '';
             if (digitsA && digitsB && digitsA === digitsB && (cleanExp.includes(cleanWe) || cleanWe.includes(cleanExp))) return;
+          }
+
+          // User directive: If words match across line breaks, it is ignorable! Never box approved master words in red!
+          if (cleanWe && (expWordsSet.has(cleanWe) || (cleanExpected && cleanExpected.includes(cleanWe)))) {
+            const isGrammarSubst =
+              (cleanExp === 'has' && cleanWe === 'have') || (cleanExp === 'have' && cleanWe === 'has') ||
+              (cleanExp === 'is' && cleanWe === 'are') || (cleanExp === 'are' && cleanWe === 'is');
+            if (we.type !== 'number' && !isGrammarSubst) {
+              return;
+            }
           }
 
           let idxInLine = -1;
@@ -725,12 +778,21 @@ function computePageHighlights(
         const safeLineBox = { ...pl.box, h: safeLineH };
 
         // Check if the current visual line pl itself is an exact text match with matchedLr.clean or matchedLr.expected
+        const cleanExpected = (matchedLr.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const plWordList = pl.text.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 2);
+        const expWordsList = (matchedLr.expected || pl.text).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        const expWordsSet = new Set(expWordsList);
+        const matchedWordsCount = plWordList.filter((w) => expWordsSet.has(w) || expWordsList.some((ew) => isOcrWordMatch(ew, w))).length;
+        const isWordsSubset = plWordList.length >= 2 && matchedWordsCount / plWordList.length >= 0.85;
+
         const isPlExactMatch =
           pl.clean.length >= 6 &&
-          matchedLr.clean &&
-          (pl.clean === matchedLr.clean ||
-           (matchedLr.expected && pl.clean === matchedLr.expected.toLowerCase().replace(/[^a-z0-9]/g, '')) ||
-           isOcrWordMatch(pl.clean, matchedLr.clean));
+          (isWordsSubset ||
+           (matchedLr.clean && pl.clean === matchedLr.clean) ||
+           (cleanExpected && pl.clean === cleanExpected) ||
+           (cleanExpected && cleanExpected.includes(pl.clean)) ||
+           (matchedLr.clean && matchedLr.clean.includes(pl.clean)) ||
+           (matchedLr.clean && isOcrWordMatch(pl.clean, matchedLr.clean)));
 
         // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, real changed words) in red! Never mark color errors or approved master words!
         const realWordErrors = isPlExactMatch
@@ -821,11 +883,30 @@ function computePageHighlights(
               if (digitsA && digitsB && digitsA === digitsB && (cleanExpWord.includes(cleanWeWord) || cleanWeWord.includes(cleanExpWord))) return;
             }
 
+            if (!isColorType && cleanWeWord && CLIENT_STOP_WORDS.has(cleanWeWord)) {
+              if (cleanExpected && cleanExpected.includes(cleanWeWord)) return;
+              const expWords = (matchedLr.expected || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+              if (expWords.includes(cleanWeWord)) return;
+            }
+
+            // User directive: If words match across line breaks, it is ignorable! Never box approved master words in red!
+            if (!isColorType && cleanWeWord) {
+              if (expWordsSet.has(cleanWeWord) || (cleanExpected && cleanExpected.includes(cleanWeWord))) {
+                const isGrammarSubst =
+                  (cleanExpWord === 'has' && cleanWeWord === 'have') || (cleanExpWord === 'have' && cleanWeWord === 'has') ||
+                  (cleanExpWord === 'is' && cleanWeWord === 'are') || (cleanExpWord === 'are' && cleanWeWord === 'is');
+                if (we.type !== 'number' && !isGrammarSubst) {
+                  return;
+                }
+              }
+            }
+
             if (pl.lineItems && pl.lineItems.length > 0) {
               for (const item of pl.lineItems) {
                 const itemStr = (item.str || '').trim();
                 const cleanItemStr = itemStr.toLowerCase().replace(/[^a-z0-9]/g, '');
                 if (!isColorType && cleanItemStr && cleanExpWord && (cleanItemStr === cleanExpWord || isOcrWordMatch(cleanExpWord, cleanItemStr))) return;
+                if (!isColorType && itemStr.toLowerCase() === (we.expected || '').toLowerCase()) return;
 
                 if (itemStr.toLowerCase() === weWord.toLowerCase() || (cleanWeWord && cleanItemStr === cleanWeWord)) {
                   wordBox = {
@@ -1063,6 +1144,11 @@ function computePageHighlights(
       .replace(/^(Bold\s*\+\s*Italic|Bold|Italic|Regular):\s*["']?|["']?$/gi, '')
       .trim();
 
+    const isFormatting = err.category?.includes('Formatting') || err.type?.includes('style') || err.type?.includes('color');
+    if (!isFormatting && rawFound && rawExpected && rawFound.toLowerCase() === rawExpected.toLowerCase()) {
+      return;
+    }
+
     let target = rawFound;
     if (!target || target === '(deleted)' || target === '(none)' || target === '(missing in PDF)') {
       target = rawExpected;
@@ -1121,15 +1207,19 @@ function computePageHighlights(
     // ── STRATEGY 1: SINGLE WORD / TOKEN / PUNCTUATION / SYMBOL / SPACE ──
     // For single words (e.g. gastrointestinal, SPONSORED, health, recipients, from), mark ONLY that exact word box!
     let candidates = [];
+    const isSingleWord = !normTarget.includes(' ') && /[a-zA-Z0-9]/.test(normTarget);
     for (const it of itemBoxes) {
       const itText = it.cleanStr.toLowerCase();
-      if (itText.includes(normTarget)) {
-        let isExactWord = false;
-        if (!normTarget.includes(' ')) {
-          const re = new RegExp(`\\b${normTarget.replace(/[-[\]{}()*+?.,\\^$|#\\s]/g, '\\$&')}\\b`, 'i');
-          isExactWord = re.test(itText);
+      if (isSingleWord) {
+        const escapedWord = normTarget.replace(/[-[\]{}()*+?.,\\^$|#\\s]/g, '\\$&');
+        const re = new RegExp(`(?:^|[^a-zA-Z0-9])(${escapedWord})(?:$|[^a-zA-Z0-9])`, 'i');
+        const match = re.exec(itText);
+        if (match) {
+          const matchOffset = match.index + (match[0].startsWith(match[1]) ? 0 : 1);
+          candidates.push({ it, isExactWord: true, matchIdx: matchOffset });
         }
-        candidates.push({ it, isExactWord, matchIdx: itText.indexOf(normTarget) });
+      } else if (itText.includes(normTarget)) {
+        candidates.push({ it, isExactWord: false, matchIdx: itText.indexOf(normTarget) });
       }
     }
 
@@ -1157,7 +1247,7 @@ function computePageHighlights(
         }
       }
       if (!bestSingle) {
-        bestSingle = candidates.find((c) => c.isExactWord) || candidates[0];
+        bestSingle = isSingleWord ? candidates.find((c) => c.isExactWord) : (candidates.find((c) => c.isExactWord) || candidates[0]);
       }
     }
 
@@ -1207,8 +1297,11 @@ function computePageHighlights(
         const startItem = itemBoxes[i];
         const startClean = startItem.cleanStr.toLowerCase();
 
-        if (firstWord && !startClean.includes(firstWord)) {
-          continue;
+        if (firstWord) {
+          const firstWordRe = new RegExp(`(?:^|[^a-zA-Z0-9])${firstWord.replace(/[-[\]{}()*+?.,\\^$|#\\s]/g, '\\$&')}(?:$|[^a-zA-Z0-9])`, 'i');
+          if (!firstWordRe.test(startClean)) {
+            continue;
+          }
         }
 
         let combined = '';

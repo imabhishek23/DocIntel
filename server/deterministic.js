@@ -1152,8 +1152,14 @@ export function getColorCategory(color) {
 
 export function isColorMismatch(colorA, colorB, catA, catB, tokenA, tokenB) {
   if (!colorA && !catA && !colorB && !catB) return false;
+  // If either side has NO color metadata at all (e.g. from OCR or unstyled PDF), do not assert a color mismatch
+  if ((!colorA && !catA) || (!colorB && !catB)) return false;
+
   const cA = (colorA ? getColorCategory(colorA) : catA) || 'black';
   const cB = (colorB ? getColorCategory(colorB) : catB) || 'black';
+
+  // Both have identical color categories (e.g. both are purple, both are orange, both are black) -> matching!
+  if (cA === cB) return false;
 
   const isNeutralA = cA === 'black' || cA === 'gray';
   const isNeutralB = cB === 'black' || cB === 'gray';
@@ -1161,7 +1167,7 @@ export function isColorMismatch(colorA, colorB, catA, catB, tokenA, tokenB) {
   // Both are neutral body text colors (black vs dark gray) -> no mismatch
   if (isNeutralA && isNeutralB) return false;
 
-  // If both have distinct non-neutral colors (e.g. orange vs purple, red vs blue, teal vs purple) -> mismatch
+  // If both have distinct non-neutral colors (e.g. red vs blue, teal vs purple) -> mismatch
   if (!isNeutralA && !isNeutralB) {
     if (cA !== cB) return true;
     if (Array.isArray(colorA) && Array.isArray(colorB)) {
@@ -1171,8 +1177,10 @@ export function isColorMismatch(colorA, colorB, catA, catB, tokenA, tokenB) {
     return false;
   }
 
-  // One is neutral (black/gray) and the other has an intentional brand/alert color (purple, orange, teal, red, blue, green):
+  // One is neutral (black/gray) and the other has an explicit non-neutral color:
+  // Only report if BOTH sides actually supplied explicit color values (not defaulted)
   if (isNeutralA !== isNeutralB) {
+    if (!colorA || !colorB) return false;
     const rawA = (tokenA?.raw || '').replace(/[^a-zA-Z0-9]/g, '');
     const rawB = (tokenB?.raw || '').replace(/[^a-zA-Z0-9]/g, '');
     if (!rawA && !rawB) return false;
@@ -1192,27 +1200,36 @@ export function getStyleLabel(isBold, isItalic, isUnderline) {
 
 export function groupConsecutiveFormattingErrors(errors) {
   if (!errors || errors.length <= 1) return errors || [];
-  const merged = [];
-  let cur = null;
-  for (const err of errors) {
-    if (
-      cur &&
-      err.type === cur.type &&
-      err.category === cur.category &&
-      err.expected === cur.expected &&
-      err.found === cur.found &&
-      err.bStartIdx === cur.bEndIdx
-    ) {
-      cur.word += ' ' + err.word;
-      cur.clean += ' ' + err.clean;
-      cur.bEndIdx = err.bEndIdx;
-    } else {
-      if (cur) merged.push(cur);
-      cur = { ...err };
+
+  const styleErrors = errors.filter((e) => e.type !== 'color_mismatch');
+  const colorErrors = errors.filter((e) => e.type === 'color_mismatch');
+
+  const groupList = (list) => {
+    if (list.length <= 1) return list;
+    const merged = [];
+    let cur = null;
+    for (const err of list) {
+      if (
+        cur &&
+        err.type === cur.type &&
+        err.category === cur.category &&
+        err.expected === cur.expected &&
+        err.found === cur.found &&
+        err.bStartIdx === cur.bEndIdx
+      ) {
+        cur.word += ' ' + err.word;
+        cur.clean += ' ' + err.clean;
+        cur.bEndIdx = err.bEndIdx;
+      } else {
+        if (cur) merged.push(cur);
+        cur = { ...err };
+      }
     }
-  }
-  if (cur) merged.push(cur);
-  return merged;
+    if (cur) merged.push(cur);
+    return merged;
+  };
+
+  return [...groupList(styleErrors), ...groupList(colorErrors)];
 }
 
 function extractStyledTokensHelper(text) {
@@ -1331,7 +1348,7 @@ const COMPOSITE_NON_ISI_LINE_REGEX =
   /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*(?:≥|>=)|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*(?:≥|>=)|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|\d+\.\s+[A-Z][a-z]+|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|Click\s+to\s+view|To\s+report\s+SUSPECTED|ViiV\s+Healthcare|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
 
 const COMPOSITE_ISI_START_REGEX =
-  /^(?:<b>\s*)?(?:[A-Z0-9\s-]+\|\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(?:&|and)\s*Important\s+Safety\s+Information|Contraindications?|Warnings\s*(?:and|&)\s*Precautions|Adverse\s+Reactions|Boxed\s+Warning|Safety\s+Considerations)/i;
+  /^(?:<b>\s*)?(?:[A-Z0-9\s-]+\|\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(?:&|and)\s*Important\s+Safety\s+Information|Contraindications?|Warnings\s*(?:and|&)\s*Precautions|Adverse\s+Reactions|Drug\s+Interactions|Use\s+in\s+Specific\s+Populations|Boxed\s+Warning|Safety\s+Considerations)/i;
 
 /**
  * Extracts both ISI and Non-ISI marketing lines from Composite PDF B or Reference Document A.
@@ -1638,6 +1655,9 @@ function isOcrWordMatch(normA, normB) {
   if (normA.length === 2 && normB.length === 1 && normA.includes(normB)) return true;
   if (normA.length === 1 && normB.length === 2 && normB.includes(normA)) return true;
 
+  // Common preposition / particle OCR merging (e.g. 'at least' -> 'atleast')
+  if ((normA === 'least' && normB === 'atleast') || (normB === 'least' && normA === 'atleast')) return true;
+
   // 2-letter words: exact match required
   if (normA.length <= 2 && normB.length <= 2) return normA === normB;
 
@@ -1661,6 +1681,43 @@ function isOcrWordMatch(normA, normB) {
   if ((normA === 'was' && normB === 'were') || (normA === 'were' && normB === 'was')) return false;
   if ((normA === 'in' && normB === 'on') || (normA === 'on' && normB === 'in')) return false;
   if ((normA === 'more' && normB === 'most') || (normA === 'most' && normB === 'more')) return false;
+
+  // Medical, safety, and drug terminology OCR slips
+  if ((normA === 'drug' && /^(?:chug|dhug|dug|drg|rug)$/i.test(normB)) ||
+      (normB === 'drug' && /^(?:chug|dhug|dug|drg|rug)$/i.test(normA))) return true;
+
+  if ((normA === 'tract' && /^(?:act|trat|traet|trct)$/i.test(normB)) ||
+      (normB === 'tract' && /^(?:act|trat|traet|trct)$/i.test(normA))) return true;
+
+  if ((normA === 'acute' && /^(?:acula|acule|acut|aute)$/i.test(normB)) ||
+      (normB === 'acute' && /^(?:acula|acule|acut|aute)$/i.test(normA))) return true;
+
+  if ((normA === 'month' && /^(?:moh|monh|mont)$/i.test(normB)) ||
+      (normB === 'month' && /^(?:moh|monh|mont)$/i.test(normA))) return true;
+
+  if ((normA === 'liver' && /^(?:ver|iver|livr)$/i.test(normB)) ||
+      (normB === 'liver' && /^(?:ver|iver|livr)$/i.test(normA))) return true;
+
+  if ((normA === 'risk' && /^(?:sk|isk|rsk)$/i.test(normB)) ||
+      (normB === 'risk' && /^(?:sk|isk|rsk)$/i.test(normA))) return true;
+
+  if ((normA === 'prior' && /^(?:ror|pior|prir)$/i.test(normB)) ||
+      (normB === 'prior' && /^(?:ror|pior|prir)$/i.test(normA))) return true;
+
+  if ((normA === 'oral' && /^(?:al|oal|orl)$/i.test(normB)) ||
+      (normB === 'oral' && /^(?:al|oal|orl)$/i.test(normA))) return true;
+
+  if ((normA === 'viral' && /^(?:ial|vral|virl)$/i.test(normB)) ||
+      (normB === 'viral' && /^(?:ial|vral|virl)$/i.test(normA))) return true;
+
+  if ((normA === 'release' && /^(?:roleasa|releas|relase)$/i.test(normB)) ||
+      (normB === 'release' && /^(?:roleasa|releas|relase)$/i.test(normA))) return true;
+
+  if ((normA === 'sjs' && /^(?:sj|sjs|s-j-s)$/i.test(normB)) ||
+      (normB === 'sjs' && /^(?:sj|sjs|s-j-s)$/i.test(normA))) return true;
+
+  if ((normA === 'stevens-johnson' && /^(?:johnson|stevens)$/i.test(normB)) ||
+      (normB === 'stevens-johnson' && /^(?:johnson|stevens)$/i.test(normA))) return true;
 
   // Length 4-5 words (e.g. 'with' vs 'wih', 'from' vs 'fom', 'sleep' vs 'sloop')
   // Allow at most 1 character typo/drop for short 4-5 letter words
@@ -1737,7 +1794,7 @@ function hasDifferentNumbers(ct, bt) {
   return false;
 }
 
-function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
+function alignTokensLcs(bTokens, cSlice, canonicalWordsSet, options = {}) {
   const M = bTokens.length;
   const N = cSlice.length;
   if (M === 0) return { consumedCount: 0, issues: [], wordErrors: [], formattingErrors: [] };
@@ -1843,6 +1900,53 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
             bEndIdx: bIdx + 1,
           });
         }
+
+        // Check bold / italic / underline styling differences (only if Document B has styling metadata)
+        const isBoldA = !!ct.isBold;
+        const isItalicA = !!ct.isItalic;
+        const isUnderlineA = !!ct.isUnderline;
+        const isBoldB = !!bt.isBold;
+        const isItalicB = !!bt.isItalic;
+        const isUnderlineB = !!bt.isUnderline;
+
+        if (options.docBHasStyle && (isBoldA !== isBoldB || isItalicA !== isItalicB || isUnderlineA !== isUnderlineB)) {
+          const expStyle = getStyleLabel(isBoldA, isItalicA, isUnderlineA);
+          const foundStyle = getStyleLabel(isBoldB, isItalicB, isUnderlineB);
+          const issueMsg = `Expected ${expStyle} text; found ${foundStyle}.`;
+          formattingErrors.push({
+            word: bt.raw,
+            clean: bt.clean,
+            expected: expStyle,
+            found: foundStyle,
+            issue: issueMsg,
+            details: issueMsg,
+            type: 'style_mismatch',
+            category: isUnderlineA !== isUnderlineB ? 'Formatting (Underline)' : 'Formatting (Bold / Italic)',
+            bStartIdx: bIdx,
+            bEndIdx: bIdx + 1,
+          });
+        }
+
+        // Check text color differences (headings and intentional alert/brand colors)
+        if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
+          const expColor = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard');
+          const foundColor = (bt.colorCategory === 'black' || !bt.colorCategory ? 'black' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'custom color');
+          const issueMsg = `Color Mismatch: Expected ${expColor} text; found ${foundColor}.`;
+          formattingErrors.push({
+            word: bt.raw,
+            clean: bt.clean,
+            expected: expColor,
+            found: foundColor,
+            expectedColorName: expColor,
+            foundColorName: foundColor,
+            issue: issueMsg,
+            details: issueMsg,
+            type: 'color_mismatch',
+            category: 'Formatting (Color)',
+            bStartIdx: bIdx,
+            bEndIdx: bIdx + 1,
+          });
+        }
       }
       continue;
     }
@@ -1893,6 +1997,18 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
       }
 
       // Real word substitution (e.g. "has" vs "have")
+      // User directive: If words match across line breaks in the current statement, it is ignorable!
+      const isGrammarSubst =
+        (stripA === 'has' && stripB === 'have') || (stripA === 'have' && stripB === 'has') ||
+        (stripA === 'is' && stripB === 'are') || (stripA === 'are' && stripB === 'is') ||
+        (stripA === 'was' && stripB === 'were') || (stripA === 'were' && stripB === 'was') ||
+        (stripA === 'in' && stripB === 'on') || (stripA === 'on' && stripB === 'in') ||
+        (stripA === 'to' && stripB === 'of') || (stripA === 'of' && stripB === 'to');
+
+      if (!isGrammarSubst && cSlice.some((cTok) => isTokensEquivalent(cTok, bt) || isOcrWordMatch(stripAlphanum(cTok.raw), stripB))) {
+        continue;
+      }
+
       const expText = ct.raw;
       const issueMsg = `Word Mistake: Found "${bt.raw}", expected "${ct.raw}"`;
       issues.push(issueMsg);
@@ -1932,11 +2048,13 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet) {
     });
   }
 
+  const groupedFormattingErrors = groupConsecutiveFormattingErrors(formattingErrors);
+
   return {
     consumedCount: bestJ,
     issues,
     wordErrors,
-    formattingErrors: [],
+    formattingErrors: groupedFormattingErrors,
   };
 }
 
@@ -1970,6 +2088,10 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
   if (linesB.length === 0 && nonIsiLinesB.length === 0) {
     return compareTargetedIsiFallback(textA, textB);
   }
+
+  // Detect whether Document B has explicit font styling / color metadata (vs plain text / scanned image OCR)
+  const docBHasStyle = linesB.some((l) => (l.tokens || []).some((t) => t.isBold || t.isItalic || t.isUnderline));
+  const docBHasColor = linesB.some((l) => (l.tokens || []).some((t) => t.color || (t.colorCategory && t.colorCategory !== 'black')));
 
   // Flatten canonical reference lines into indexed tokens with line mapping
   const canonicalTokens = [];
@@ -2319,7 +2441,7 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
       tokenCursor,
       Math.min(canonicalTokens.length, tokenCursor + bTokens.length + 12)
     );
-    const alignmentRes = alignTokensLcs(bTokens, cSlice, canonicalWordsSet);
+    const alignmentRes = alignTokensLcs(bTokens, cSlice, canonicalWordsSet, { docBHasStyle, docBHasColor });
     tokenCursor += alignmentRes.consumedCount;
     issues.push(...alignmentRes.issues);
     wordErrors.push(...alignmentRes.wordErrors);
@@ -2370,6 +2492,10 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     // - Text that matches PDF A must always remain green, even if formatting (color, bold, italic, underline) differs.
     // - Red highlighting is reserved strictly for verified text discrepancies.
     if (wordErrors.length === 0) {
+      const lineComment = formattingErrors.length > 0
+        ? formattingErrors.map((fe) => fe.details).join('; ')
+        : 'Complete line match';
+
       isiLineResultsB.push({
         lineIndex: lIdx + 1,
         lineNum: lIdx + 1,
@@ -2379,13 +2505,13 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         box: lineB.box || null,
         color: 'green',
         status: 'matched',
-        comment: 'Complete line match',
+        comment: lineComment,
         expected: cleanLine,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
         wordErrors: [],
-        formattingErrors: [],
-        hasFormattingErrors: false,
+        formattingErrors,
+        hasFormattingErrors: formattingErrors.length > 0,
       });
     } else {
       const groupedWordErrors = wordErrors;
@@ -2415,8 +2541,8 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
         comment,
         issues: sortedIssues,
         wordErrors: groupedWordErrors,
-        formattingErrors: [],
-        hasFormattingErrors: false,
+        formattingErrors,
+        hasFormattingErrors: formattingErrors.length > 0,
         expected: isMajorityChanged ? '(none)' : targetLineText,
         found: cleanLine,
         section: targetLineText.slice(0, 35) || 'Important Safety Information',
@@ -2466,6 +2592,35 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
           expected: expDisplay,
           found: foundDisplay,
           details: we.issue || we.details || comment,
+        });
+      }
+    }
+
+    // Record formatting errors in mismatchReport and proofreadingErrors
+    if (formattingErrors.length > 0) {
+      for (let fIdx = 0; fIdx < formattingErrors.length; fIdx++) {
+        const fe = formattingErrors[fIdx];
+        mismatchReport.push({
+          index: mismatchReport.length + 1,
+          id: `line_format_${lIdx + 1}_f${fIdx + 1}`,
+          page: lineB.page || 1,
+          section: targetLineText.slice(0, 35) || 'Important Safety Information',
+          originalWordText: fe.expected,
+          pdfText: fe.found,
+          errorType: fe.category,
+          severity: 'medium',
+          details: fe.details,
+          isFormattingError: true,
+          lineNum: lIdx + 1,
+        });
+
+        proofreadingErrors.push({
+          id: `proof_format_${lIdx + 1}_f${fIdx + 1}`,
+          category: fe.category,
+          severity: 'medium',
+          expected: `${fe.expected}: "${fe.word}"`,
+          found: `${fe.found}: "${fe.word}"`,
+          details: fe.details,
         });
       }
     }

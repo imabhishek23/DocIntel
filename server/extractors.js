@@ -382,7 +382,7 @@ async function extractPdfText(buffer) {
           const scale = 2.5;
           const { buf: bmpBuf } = createBmpBufferDownsampled(largeImgObj.width, largeImgObj.height, largeImgObj.data, scale);
           const ocrPromise = ocrWorkerInstance.recognize(bmpBuf, {}, { text: true, blocks: true });
-          const maxTimeoutMs = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) ? 3000 : 7000;
+          const maxTimeoutMs = (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) ? 3500 : 60000;
           const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('OCR timeout on serverless')), maxTimeoutMs));
           const ret = await Promise.race([ocrPromise, timeoutPromise]);
 
