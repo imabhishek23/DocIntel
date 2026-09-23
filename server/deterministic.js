@@ -99,7 +99,7 @@ export function detectProofreadingErrors(textA, textB) {
       } else if (lower.startsWith('<font') || lower.startsWith('<c') || lower.startsWith('<span')) {
         const matchRgb = part.match(/color=["']?rgb\((\d+),\s*(\d+),\s*(\d+)\)["']?/i);
         const matchHex = part.match(/color=["']?#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})["']?/i);
-        const matchCat = part.match(/(?:cat|data-cat)=["']?([a-z0-9_-]+)["']?/i);
+        const matchCat = part.match(/(?:cat|data-cat)=["']?([^"'>\s]+)["']?/i);
         if (matchRgb) {
           currentColor = [parseInt(matchRgb[1], 10), parseInt(matchRgb[2], 10), parseInt(matchRgb[3], 10)];
           colorCategory = getColorCategory(currentColor);
@@ -107,7 +107,7 @@ export function detectProofreadingErrors(textA, textB) {
           currentColor = [parseInt(matchHex[1], 16), parseInt(matchHex[2], 16), parseInt(matchHex[3], 16)];
           colorCategory = getColorCategory(currentColor);
         }
-        if (matchCat) {
+        if (matchCat && matchCat[1] && !matchCat[1].startsWith('rgb') && matchCat[1] !== 'black') {
           colorCategory = matchCat[1];
         }
       } else if (lower.startsWith('</font') || lower.startsWith('</c') || lower.startsWith('</span')) {
@@ -1112,6 +1112,11 @@ export function getColorCategory(color) {
     return 'black';
   }
 
+  // 1b. Dark navy / deep slate blue (e.g. r: 18, g: 49, b: 72)
+  if (r < 60 && g < 80 && b > 40 && b > r * 1.5 && b > g * 1.1) {
+    return 'navy';
+  }
+
   // 2. Neutral gray: all three channels close to each other (monochrome/grayscale body text)
   if (Math.abs(r - g) < 25 && Math.abs(g - b) < 25 && Math.abs(r - b) < 25) {
     return 'gray';
@@ -1261,7 +1266,7 @@ function extractStyledTokensHelper(text) {
     } else if (lower.startsWith('<font') || lower.startsWith('<c') || lower.startsWith('<span')) {
       const matchRgb = part.match(/color=["']?rgb\((\d+),\s*(\d+),\s*(\d+)\)["']?/i);
       const matchHex = part.match(/color=["']?#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})["']?/i);
-      const matchCat = part.match(/(?:cat|data-cat)=["']?([a-z0-9_-]+)["']?/i);
+      const matchCat = part.match(/(?:cat|data-cat)=["']?([^"'>\s]+)["']?/i);
       if (matchRgb) {
         currentColor = [parseInt(matchRgb[1], 10), parseInt(matchRgb[2], 10), parseInt(matchRgb[3], 10)];
         colorCategory = getColorCategory(currentColor);
@@ -1269,7 +1274,7 @@ function extractStyledTokensHelper(text) {
         currentColor = [parseInt(matchHex[1], 16), parseInt(matchHex[2], 16), parseInt(matchHex[3], 16)];
         colorCategory = getColorCategory(currentColor);
       }
-      if (matchCat) {
+      if (matchCat && matchCat[1] && !matchCat[1].startsWith('rgb') && matchCat[1] !== 'black') {
         colorCategory = matchCat[1];
       }
     } else if (lower.startsWith('</font') || lower.startsWith('</c') || lower.startsWith('</span')) {
@@ -1345,7 +1350,7 @@ export function extractCanonicalStatements(textA) {
 }
 
 const COMPOSITE_NON_ISI_LINE_REGEX =
-  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*(?:≥|>=)|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*(?:≥|>=)|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References:|References\b|\d+\.\s+[A-Z][a-z]+|Lancotz|Delany|Fichenboun|Please\s+se(?:e)?\s+full\s+Prescribing|Click\s+to\s+view|To\s+report\s+SUSPECTED|ViiV\s+Healthcare|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
+  /^(?:Subject:|Preheader:|HCP EDUCATIONAL|IMMUNOVA$|AEROVIA$|NUCALA$|BENLYSTA$|FOR PATIENTS WITH|A focused conversation|symptom frequency|Explore a fictional|JORDAN|Works full time|CONSIDER WHETHER|Review exacerbation|EXPLORE (?:THE|MORE|PATIENT)|ADULTS\s*(?:≥|>=)|MAY\s+HAVE|RISK\s+FOR|As\s+patients\s+age|decline\s+in|Certain\s+chronic|also\s+be\s+associated|risk\.|ARTHUR|\d+\s+years\s+old|living\s+with\s+diabetes|PATIENT\s+(?:SNAPSHOT|HISTORY)|Active\s+in\s+managing|Has\s+not\s+been|Discusses\s+preventive|Patients\s*(?:≥|>=)|DIABETES|Observational\s+studies|some\s+adults\s+with|Educational\s+statement|Inform\s+your\s+PATIENTS|vaccination\s+conversations|SEE\s+EXAMPLES|PRACTICE|For\s+pricing\s+information|VACCINES\s+WAC|This\s+email\s+is\s+intended|STOP\s+OR\s+CHANGE|Trademarks\s+are\s+owned|©\d{4}|Produced\s+in\s+USA|Privacy\s+Notice|Please\s+do\s+not\s+respond|You\s+are\s+receiving|\[Email\s+Vendor|For\s+editorial\s+QA|Not\s+approved\s+promotional|PMUS-CBTEML|DESKTOP$|MOBILE$|APRETUDE\s+HCP\s+PROACT|Variable\s+Manuscript|(?:Magenta|Red|Blue)\s+symbol\s+denotes|Functional\s+Annotations|\d+(?:st|nd|rd|th)-party\s+header|Date:\s*\[|From:\s*ViiV|To:\s*\[|Subject\s+Line:|Preview\s+Text:|Email\s+Vendor\s+Variable|ViiV\s+Healthcare\s+does\s+not\s+control|This\s+is\s+an\s+industry-prepared|ARE\s+YOUR\s+PATIENTS\s+READY|WITHOUT\s+DAILY\s+PILLS|See\s+which\s+PrEP\s+patients|Give\s+them\s+the\s+power|View\s+patient\s+choice|Learn\s+more|View\s+in\s+browser|Prescribing\s+Information,\s+including\s+Boxed\s+Warning|Apretude\s+cabotegravir|Kindly\s+\+Expand|Mockup\s+HTML|https?:\/\/|TDF\s+option|Staging\s+login|User\s+ID:|Password:|\[no\s+notes\s+on\s+this\s+page\]|-\s*\d+\s*-|In\s+the\s+HPTN|Which\s+PrEP|participants\s+choose|APRETUDE\s+or\s+TRUVADA|\(?TDF\/?(?:I|F)TC\)?|Your\s+patients\s+deserve|choice\s+on\s+how\s+to\s+PrEP|choice\s+data\s+today|It['’]s\s+time\s+to\s+help|patients\s+prioritize\s+HIV|prevention$|Give\s+them\s+the\s+power|HPTN\s+08[34]|HPTN\s*=|View\s+patient\s+choice|Learn\s+more|py$|—y$|i\.\s+be|References?:|References?\b|\d+\.\s+[A-Z][a-z]+|Lancotz|Delany|Fichenboun|Click\s+to\s+view|To\s+report\s+SUSPECTED|ViiV\s+Healthcare|VI\s+H[eo]allca|LA77|sun\s+gov|Tis\s+mai\s+tended|Thi\s+ma[il]{2}\s+was|Le[og]a?l\s+Notices|party\s+footer)/i;
 
 const COMPOSITE_ISI_START_REGEX =
   /^(?:<b>\s*)?(?:[A-Z0-9\s-]+\|\s*)?(?:Important\s+Safety\s+Information(?:\s*\(cont[’']?d\))?|Selected\s+Important\s+Safety\s+Information|Brief\s+Summary(?:\s+of\s+Prescribing\s+Information)?|Prescribing\s+Information|Indication(?:\s*and\s*Usage)?|Indication\s*(?:&|and)\s*Important\s+Safety\s+Information|Contraindications?|Warnings\s*(?:and|&)\s*Precautions|Adverse\s+Reactions|Drug\s+Interactions|Use\s+in\s+Specific\s+Populations|Boxed\s+Warning|Safety\s+Considerations)/i;
@@ -1387,7 +1392,8 @@ export function extractClassifiedLinesFromPdf(textB) {
     if (
       /^(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}$/i.test(clean) ||
       /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/.test(clean) ||
-      /^Page\s+\d+(?:\s+of\s+\d+)?$/i.test(clean)
+      /^Page\s+\d+(?:\s+of\s+\d+)?$/i.test(clean) ||
+      /FICTIONAL\s+QA\s+SAMPLE/i.test(clean)
     ) {
       nonIsiLines.push({
         raw: cleanRaw,
@@ -1436,7 +1442,7 @@ export function extractClassifiedLinesFromPdf(textB) {
         /is not approved promotional material\.?$/i.test(clean) ||
         /For editorial QA training only/i.test(clean) ||
         /^(?:CONTINUED\s+BELOW|Additional\s+Important\s+Safety\s+Information\s*continued\s*below)/i.test(clean) ||
-        /^(?:References\b|References:|To\s+report\s+SUSPECTED|Please\s+(?:click|see)\s+(?:here\s+for\s+)?full\s+Prescribing|Click\s+to\s+view|This\s+email\s+(?:is|was)|Legal\s+Notices|Privacy\s+Notice|PM-?US-|©\s*\d{4}|Trademarks\s+are\s+owned|\d+\.\s+[A-Z][a-z]+|ViiV\s+Healthcare|1st-party\s+footer)/i.test(clean)
+        /^(?:References?\b|References?:|To\s+report\s+SUSPECTED|Click\s+to\s+view|This\s+email\s+(?:is|was)|Legal\s+Notices|Privacy\s+Notice|PM-?US-|©\s*\d{4}|Trademarks\s+are\s+owned|\d+\.\s+[A-Z][a-z]+|ViiV\s+Healthcare|1st-party\s+footer)/i.test(clean)
       ) {
         inIsi = false;
       }
@@ -1510,6 +1516,13 @@ const stopWordsSet = new Set(['to', 'if', 'is', 'the', 'at', 'or', 'of', 'in', '
 function isOcrWordMatch(normA, normB) {
   if (!normA || !normB) return false;
   if (normA === normB) return true;
+
+  // Critical dosage & medical units must NEVER match as OCR slips! (e.g. 10 mg vs 10 mcg is a 1000x difference)
+  const DOSAGE_UNITS = new Set(['mg', 'mcg', 'ug', 'g', 'kg', 'ml', 'l', 'iu', 'u', 'mmol', 'mol', 'ng', 'pg', 'mcl', 'cl', 'dl', 'ppm', 'ppb']);
+  if ((DOSAGE_UNITS.has(normA) || DOSAGE_UNITS.has(normB)) && normA !== normB) {
+    if ((normA === 'ug' && normB === 'mcg') || (normA === 'mcg' && normB === 'ug')) return true;
+    return false;
+  }
 
   // Specific known OCR slips for medical/safety terms (must run BEFORE negation/prefix checks)
   if ((normA === 'without' && /^(?:wihout|wthout|withou|withot|whout)$/i.test(normB)) ||
@@ -1762,6 +1775,18 @@ const STOP_WORDS = new Set([
 
 function isTokensEquivalent(ct, bt) {
   if (!ct || !bt) return false;
+
+  // If tokens contain differing medical/dosage units (e.g. 10mg vs 10mcg), they are NEVER equivalent!
+  const unitMatchA = (ct.raw || '').match(/(?:mg|mcg|ug|g|kg|ml|l|iu|u|mmol|mol|ng|pg)$/i);
+  const unitMatchB = (bt.raw || '').match(/(?:mg|mcg|ug|g|kg|ml|l|iu|u|mmol|mol|ng|pg)$/i);
+  if (unitMatchA && unitMatchB) {
+    const uA = unitMatchA[0].toLowerCase();
+    const uB = unitMatchB[0].toLowerCase();
+    if (uA !== uB && !((uA === 'ug' && uB === 'mcg') || (uA === 'mcg' && uB === 'ug'))) {
+      return false;
+    }
+  }
+
   const stripA = stripAlphanum(ct.raw);
   const stripB = stripAlphanum(bt.raw);
   if (stripA && stripA === stripB) return true;
@@ -1901,6 +1926,26 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet, options = {}) {
           });
         }
 
+        // Check missing or differing terminal punctuation (e.g. missing full stop on AEROVIA)
+        const punctA = (ct.raw || '').match(/[.,;:!?]+$/)?.[0] || '';
+        const punctB = (bt.raw || '').match(/[.,;:!?]+$/)?.[0] || '';
+        if (punctA && punctA !== punctB && (punctA === '.' || punctB === '.' || punctA === ':' || punctB === ':')) {
+          const punctIssue = punctA === '.' && !punctB
+            ? "Missing punctuation: Expected '.' at end of sentence."
+            : `Punctuation Difference: Found "${bt.raw}", expected "${ct.raw}"`;
+          issues.push(punctIssue);
+          wordErrors.push({
+            word: bt.raw,
+            clean: bt.clean,
+            expected: punctA === '.' && !punctB ? '.' : ct.raw,
+            issue: punctIssue,
+            details: punctIssue,
+            type: 'punctuation',
+            bStartIdx: bIdx,
+            bEndIdx: bIdx + 1,
+          });
+        }
+
         // Check bold / italic / underline styling differences (only if Document B has styling metadata)
         const isBoldA = !!ct.isBold;
         const isItalicA = !!ct.isItalic;
@@ -1931,6 +1976,9 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet, options = {}) {
         if (isColorMismatch(ct.color, bt.color, ct.colorCategory, bt.colorCategory, ct, bt)) {
           const expColor = (ct.colorCategory === 'black' || !ct.colorCategory ? 'standard' : ct.colorCategory) || (ct.color ? getColorCategory(ct.color) : 'standard');
           const foundColor = (bt.colorCategory === 'black' || !bt.colorCategory ? 'black' : bt.colorCategory) || (bt.color ? getColorCategory(bt.color) : 'custom color');
+          if (expColor === foundColor || (expColor === 'standard' && foundColor === 'black') || (expColor === 'black' && foundColor === 'standard')) {
+            continue;
+          }
           const issueMsg = `Color Mismatch: Expected ${expColor} text; found ${foundColor}.`;
           formattingErrors.push({
             word: bt.raw,
@@ -1966,8 +2014,13 @@ function alignTokensLcs(bTokens, cSlice, canonicalWordsSet, options = {}) {
         continue;
       }
 
-      if (hasDifferentNumbers(ct, bt)) {
-        const issueMsg = `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
+      const isDosageUnit = /^(?:mg|mcg|ug|g|kg|ml|l|iu|u|mmol|mol|ng|pg|mcl|cl|dl|ppm|ppb)$/i;
+      const isUnitMismatch = (isDosageUnit.test(stripA) || isDosageUnit.test(stripB)) && stripA.toLowerCase() !== stripB.toLowerCase();
+
+      if (hasDifferentNumbers(ct, bt) || isUnitMismatch) {
+        const issueMsg = isUnitMismatch
+          ? `Unit Mismatch: Found "${bt.raw}", expected "${ct.raw}"`
+          : `Number Mismatch: Found "${bt.raw}", expected "${ct.raw}"`;
         issues.push(issueMsg);
         wordErrors.push({
           word: bt.raw,
@@ -2470,9 +2523,21 @@ export function compareIsiLineByLine(textA, textB, options = {}) {
     // Requirement 1 & 2: Check missing punctuation (e.g. missing full stop at end of statement/bullet)
     const targetEndsWithPeriod = /\.\s*$/.test(targetLineText);
     const lineEndsWithPeriod = /[.!?]\s*$/.test(cleanLine);
-    const isEndOfBlock = !nextLineObj || /^[•\-\*]/.test(nextLineClean) || /^[A-Z\s]{4,}:?$/.test(nextLineClean) || /Important Safety Information/i.test(nextLineClean);
+    const isEndOfBlock =
+      !nextLineObj ||
+      /^[•\-\*]/.test(nextLineClean) ||
+      /^\d+\./.test(nextLineClean) ||
+      /^[A-Z\s]{4,}:?$/.test(nextLineClean) ||
+      /Important Safety Information/i.test(nextLineClean) ||
+      /^Please\s+(?:see|click)/i.test(nextLineClean) ||
+      /^References?/i.test(nextLineClean) ||
+      (canonicalTokens[tokenCursor] && canonicalTokens[tokenCursor].refLineIndex !== currRefLine);
 
-    if (targetEndsWithPeriod && !lineEndsWithPeriod && isEndOfBlock) {
+    const hasPunctErrorOnLast = wordErrors.some((we) => we.type === 'punctuation' && (we.bStartIdx === bTokens.length - 1 || we.word === lastBToken?.raw));
+    const isMidSentence = nextLineClean && /^[a-z]/.test(nextLineClean);
+    const isTrueEndOfBlock = isEndOfBlock && !isMidSentence;
+
+    if (targetEndsWithPeriod && !lineEndsWithPeriod && isTrueEndOfBlock && !hasPunctErrorOnLast) {
       const punctIssue = "Missing punctuation: Expected '.' at end of sentence.";
       issues.push(punctIssue);
       wordErrors.push({

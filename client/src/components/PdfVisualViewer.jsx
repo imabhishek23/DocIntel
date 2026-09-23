@@ -73,10 +73,21 @@ function isIgnoredWordError(we, expectedText) {
   if (we.type === 'color' || we.type === 'color_mismatch' || we.type === 'style_mismatch' || we.type === 'formatting') return false;
   // Number errors must NEVER be ignored
   if (we.type === 'number') return false;
+  // Punctuation errors must NEVER be ignored
+  if (we.type === 'punctuation' || we.type === 'punctuation_missing' || we.type === 'missing_punctuation' || (we.category && we.category.toLowerCase().includes('punctuation'))) return false;
 
   const cleanWord = we.word.toLowerCase().replace(/[^a-z0-9]/g, '');
   const cleanExp = (we.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   if (cleanWord && cleanExp && (cleanWord === cleanExp || isOcrWordMatch(cleanExp, cleanWord))) return true;
+
+  // Word substitutions (like has vs have, is vs are) must NEVER be ignored!
+  const isGrammarSubst =
+    (cleanExp === 'has' && cleanWord === 'have') || (cleanExp === 'have' && cleanWord === 'has') ||
+    (cleanExp === 'is' && cleanWord === 'are') || (cleanExp === 'are' && cleanWord === 'is');
+  if (isGrammarSubst) return false;
+  if ((we.type === 'word_changed' || we.type === 'spelling') && cleanExp && cleanWord !== cleanExp && !isOcrWordMatch(cleanExp, cleanWord)) {
+    return false;
+  }
 
   // If the word itself exists in the expected master sentence (line wrap / shifted alignment artifact), it is an approved master word!
   if (cleanWord && expectedText) {
@@ -84,11 +95,6 @@ function isIgnoredWordError(we, expectedText) {
     const expWords = new Set(cleanExpected.split(/\s+/).filter(Boolean));
     if (expWords.has(cleanWord) || [...expWords].some((ew) => isOcrWordMatch(ew, cleanWord))) return true;
   }
-
-  // Word substitutions (like has vs have) must NEVER be ignored
-  if (we.type === 'word_changed' || we.type === 'spelling') return false;
-  // Punctuation errors must NEVER be ignored
-  if (we.type === 'punctuation' || we.type === 'punctuation_missing') return false;
 
   if (!cleanWord) return true;
 
@@ -121,6 +127,13 @@ const STOP_WORDS_SET = new Set(['to', 'if', 'is', 'the', 'at', 'or', 'of', 'in',
 function isOcrWordMatch(normA, normB) {
   if (!normA || !normB) return false;
   if (normA === normB) return true;
+
+  // Critical dosage & medical units must NEVER match as OCR slips! (e.g. 10 mg vs 10 mcg is a 1000x difference)
+  const DOSAGE_UNITS = new Set(['mg', 'mcg', 'ug', 'g', 'kg', 'ml', 'l', 'iu', 'u', 'mmol', 'mol', 'ng', 'pg', 'mcl', 'cl', 'dl', 'ppm', 'ppb']);
+  if ((DOSAGE_UNITS.has(normA) || DOSAGE_UNITS.has(normB)) && normA !== normB) {
+    if ((normA === 'ug' && normB === 'mcg') || (normA === 'mcg' && normB === 'ug')) return true;
+    return false;
+  }
 
   // Specific known OCR slips for medical/safety terms (must run BEFORE negation/prefix checks)
   if ((normA === 'without' && /^(?:wihout|wthout|withou|withot|whout)$/i.test(normB)) ||
@@ -404,7 +417,7 @@ function computePageHighlights(
       const lrText = (lr.text || '').trim();
       if (!lrText || lr.status === 'extra_line') continue;
       if (
-        /^(?:References\b|References:|To\s+report\s+SUSPECTED|Please\s+(?:click|see)\s+(?:here\s+for\s+)?full\s+Prescribing|Click\s+to\s+view|This\s+email\s+(?:is|was)|Legal\s+Notices|Privacy\s+Notice|PM-?US-|©\s*\d{4}|Trademarks\s+are\s+owned|\d+\.\s+[A-Z][a-z]+|ViiV\s+Healthcare|1st-party\s+footer)/i.test(
+        /^(?:References?\b|References?:|To\s+report\s+SUSPECTED|Click\s+to\s+view|This\s+email\s+(?:is|was)|Legal\s+Notices|Privacy\s+Notice|PM-?US-|©\s*\d{4}|Trademarks\s+are\s+owned|\d+\.\s+[A-Z][a-z]+|ViiV\s+Healthcare|1st-party\s+footer)/i.test(
           lrText
         )
       ) {
@@ -435,7 +448,16 @@ function computePageHighlights(
       const isWordsSubset = lrWordList.length >= 2 && matchedWordsCount / lrWordList.length >= 0.85;
 
       const hasTrueDiscrepancy = (lr.wordErrors || []).some(
-        (we) => we.type === 'number' || (we.type === 'word_changed' && !expWordsSet.has(we.clean?.toLowerCase()) && !isOcrWordMatch(we.expected, we.word))
+        (we) =>
+          we.type === 'number' ||
+          we.type === 'punctuation' ||
+          we.type === 'punctuation_missing' ||
+          we.type === 'missing_punctuation' ||
+          (we.category && we.category.toLowerCase().includes('punctuation')) ||
+          ((we.clean === 'has' && we.expected?.toLowerCase() === 'have') || (we.clean === 'have' && we.expected?.toLowerCase() === 'has')) ||
+          ((we.clean === 'is' && we.expected?.toLowerCase() === 'are') || (we.clean === 'are' && we.expected?.toLowerCase() === 'is')) ||
+          (we.type === 'word_changed' && !expWordsSet.has(we.clean?.toLowerCase()) && !isOcrWordMatch(we.expected, we.word)) ||
+          (we.type === 'spelling' && !expWordsSet.has(we.clean?.toLowerCase()) && !isOcrWordMatch(we.expected, we.word))
       );
 
       const isLineMatch = lr.color === 'green' || isWordsSubset;
@@ -470,9 +492,15 @@ function computePageHighlights(
         realWordErrors.forEach((we, wIdx) => {
           const weWord = we.word || we.clean;
           if (!weWord) return;
+          const isPunctuationType =
+            we.type === 'punctuation' ||
+            we.type === 'punctuation_missing' ||
+            we.type === 'missing_punctuation' ||
+            we.type === 'extra_punctuation' ||
+            (we.category && we.category.toLowerCase().includes('punctuation'));
           const cleanWe = weWord.toLowerCase().replace(/[^a-z0-9]/g, '');
           const cleanExp = (we.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-          if (cleanWe && cleanExp) {
+          if (!isPunctuationType && cleanWe && cleanExp) {
             if (cleanWe === cleanExp || isOcrWordMatch(cleanExp, cleanWe)) return;
             const digitsA = (we.expected || '').match(/\d+(?:\.\d+)?/g)?.join('') || '';
             const digitsB = weWord.match(/\d+(?:\.\d+)?/g)?.join('') || '';
@@ -480,7 +508,7 @@ function computePageHighlights(
           }
 
           // User directive: If words match across line breaks, it is ignorable! Never box approved master words in red!
-          if (cleanWe && (expWordsSet.has(cleanWe) || (cleanExpected && cleanExpected.includes(cleanWe)))) {
+          if (!isPunctuationType && cleanWe && (expWordsSet.has(cleanWe) || (cleanExpected && cleanExpected.includes(cleanWe)))) {
             const isGrammarSubst =
               (cleanExp === 'has' && cleanWe === 'have') || (cleanExp === 'have' && cleanWe === 'has') ||
               (cleanExp === 'is' && cleanWe === 'are') || (cleanExp === 'are' && cleanWe === 'is');
@@ -794,8 +822,21 @@ function computePageHighlights(
            (matchedLr.clean && matchedLr.clean.includes(pl.clean)) ||
            (matchedLr.clean && isOcrWordMatch(pl.clean, matchedLr.clean)));
 
+        const hasTrueDiscrepancy = (matchedLr.wordErrors || []).some(
+          (we) =>
+            we.type === 'number' ||
+            we.type === 'punctuation' ||
+            we.type === 'punctuation_missing' ||
+            we.type === 'missing_punctuation' ||
+            (we.category && we.category.toLowerCase().includes('punctuation')) ||
+            ((we.clean === 'has' && we.expected?.toLowerCase() === 'have') || (we.clean === 'have' && we.expected?.toLowerCase() === 'has')) ||
+            ((we.clean === 'is' && we.expected?.toLowerCase() === 'are') || (we.clean === 'are' && we.expected?.toLowerCase() === 'is')) ||
+            (we.type === 'word_changed' && !expWordsSet.has(we.clean?.toLowerCase()) && !isOcrWordMatch(we.expected, we.word)) ||
+            (we.type === 'spelling' && !expWordsSet.has(we.clean?.toLowerCase()) && !isOcrWordMatch(we.expected, we.word))
+        );
+
         // User Requirement: Highlight line in green; only mark specific word mismatches (wrong numbers, real changed words) in red! Never mark color errors or approved master words!
-        const realWordErrors = isPlExactMatch
+        const realWordErrors = (isPlExactMatch && !hasTrueDiscrepancy)
           ? []
           : (matchedLr.wordErrors || []).filter(
               (we) => !isIgnoredWordError(we, matchedLr.expected)
@@ -874,23 +915,29 @@ function computePageHighlights(
 
             let wordBox = null;
             const isColorType = we.type === 'color' || we.type === 'color_mismatch';
+            const isPunctuationType =
+              we.type === 'punctuation' ||
+              we.type === 'punctuation_missing' ||
+              we.type === 'missing_punctuation' ||
+              we.type === 'extra_punctuation' ||
+              (we.category && we.category.toLowerCase().includes('punctuation'));
             const cleanWeWord = weWord.toLowerCase().replace(/[^a-z0-9]/g, '');
             const cleanExpWord = (we.expected || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (!isColorType && cleanWeWord && cleanExpWord) {
+            if (!isColorType && !isPunctuationType && cleanWeWord && cleanExpWord) {
               if (cleanWeWord === cleanExpWord || isOcrWordMatch(cleanExpWord, cleanWeWord)) return;
               const digitsA = (we.expected || '').match(/\d+(?:\.\d+)?/g)?.join('') || '';
               const digitsB = weWord.match(/\d+(?:\.\d+)?/g)?.join('') || '';
               if (digitsA && digitsB && digitsA === digitsB && (cleanExpWord.includes(cleanWeWord) || cleanWeWord.includes(cleanExpWord))) return;
             }
 
-            if (!isColorType && cleanWeWord && CLIENT_STOP_WORDS.has(cleanWeWord)) {
+            if (!isColorType && !isPunctuationType && cleanWeWord && CLIENT_STOP_WORDS.has(cleanWeWord)) {
               if (cleanExpected && cleanExpected.includes(cleanWeWord)) return;
               const expWords = (matchedLr.expected || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
               if (expWords.includes(cleanWeWord)) return;
             }
 
             // User directive: If words match across line breaks, it is ignorable! Never box approved master words in red!
-            if (!isColorType && cleanWeWord) {
+            if (!isColorType && !isPunctuationType && cleanWeWord) {
               if (expWordsSet.has(cleanWeWord) || (cleanExpected && cleanExpected.includes(cleanWeWord))) {
                 const isGrammarSubst =
                   (cleanExpWord === 'has' && cleanWeWord === 'have') || (cleanExpWord === 'have' && cleanWeWord === 'has') ||
@@ -905,8 +952,8 @@ function computePageHighlights(
               for (const item of pl.lineItems) {
                 const itemStr = (item.str || '').trim();
                 const cleanItemStr = itemStr.toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (!isColorType && cleanItemStr && cleanExpWord && (cleanItemStr === cleanExpWord || isOcrWordMatch(cleanExpWord, cleanItemStr))) return;
-                if (!isColorType && itemStr.toLowerCase() === (we.expected || '').toLowerCase()) return;
+                if (!isColorType && !isPunctuationType && cleanItemStr && cleanExpWord && (cleanItemStr === cleanExpWord || isOcrWordMatch(cleanExpWord, cleanItemStr))) return;
+                if (!isColorType && !isPunctuationType && itemStr.toLowerCase() === (we.expected || '').toLowerCase()) return;
 
                 if (itemStr.toLowerCase() === weWord.toLowerCase() || (cleanWeWord && cleanItemStr === cleanWeWord)) {
                   wordBox = {
@@ -940,16 +987,30 @@ function computePageHighlights(
 
             if (!wordBox) {
               const escapedWord = weWord.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-              const wordMatch = new RegExp(`\\b${escapedWord}\\b`, 'i').exec(pl.text);
+              let wordMatch = null;
+              try {
+                wordMatch = new RegExp(`(?:^|[^a-zA-Z0-9])(${escapedWord})(?:$|[^a-zA-Z0-9])`, 'i').exec(pl.text);
+              } catch (_) {}
               if (wordMatch) {
-                const idxInLine = wordMatch.index;
+                const matchOffset = wordMatch.index + (wordMatch[0].startsWith(wordMatch[1]) ? 0 : 1);
                 const charW = safeLineBox.w / (pl.text.length || 1);
                 wordBox = {
-                  x: Math.round(safeLineBox.x + idxInLine * charW - 1),
+                  x: Math.round(safeLineBox.x + matchOffset * charW - 1),
                   y: Math.round(safeLineBox.y - 1),
                   w: Math.max(14, Math.round(weWord.length * charW + 2)),
                   h: safeLineH,
                 };
+              } else {
+                const idxInLine = pl.text.toLowerCase().indexOf(weWord.toLowerCase());
+                if (idxInLine >= 0) {
+                  const charW = safeLineBox.w / (pl.text.length || 1);
+                  wordBox = {
+                    x: Math.round(safeLineBox.x + idxInLine * charW - 1),
+                    y: Math.round(safeLineBox.y - 1),
+                    w: Math.max(14, Math.round(weWord.length * charW + 2)),
+                    h: safeLineH,
+                  };
+                }
               }
             }
 

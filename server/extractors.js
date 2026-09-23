@@ -124,6 +124,11 @@ function getColorCategory(color) {
     return 'black';
   }
 
+  // 1b. Dark navy / deep slate blue (e.g. r: 18, g: 49, b: 72)
+  if (r < 60 && g < 80 && b > 40 && b > r * 1.5 && b > g * 1.1) {
+    return 'navy';
+  }
+
   // 2. Neutral gray: all three channels close to each other (monochrome/grayscale body text)
   if (Math.abs(r - g) < 25 && Math.abs(g - b) < 25 && Math.abs(r - b) < 25) {
     return 'gray';
