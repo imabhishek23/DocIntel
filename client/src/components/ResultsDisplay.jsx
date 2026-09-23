@@ -673,7 +673,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
           punctuation: errors.filter((e) => e.category === 'Punctuation').length,
           numbers: errors.filter((e) => e.category === 'Numbers & Units').length,
           symbols: errors.filter((e) => e.category === 'Symbols & Trademarks').length,
-          formatting: errors.filter((e) => e.category === 'Formatting (Bold / Italic)').length,
+          formatting: errors.filter((e) => (e.category || '').toLowerCase().includes('format') || (e.category || '').toLowerCase().includes('underline') || e.category === 'Formatting (Bold / Italic)').length,
           words: errors.filter((e) => e.category === 'Word Mismatch').length,
           color: errors.filter((e) => e.category === 'Color Mismatch' || (e.type && e.type.includes('color'))).length,
           total: errors.length,
@@ -2518,7 +2518,7 @@ export default function ResultsDisplay({ result: rawResult, mode = 'analyze', on
                               ? 'bg-rose-100 text-rose-800'
                               : err.category === 'Symbols & Trademarks'
                               ? 'bg-emerald-100 text-emerald-800'
-                              : err.category === 'Formatting (Bold / Italic)'
+                              : err.category === 'Formatting (Bold / Italic)' || err.category === 'Formatting (Underline)' || (err.category || '').toLowerCase().includes('format')
                               ? 'bg-purple-100 text-purple-800 border border-purple-300'
                               : 'bg-indigo-100 text-indigo-800'
                           }`}

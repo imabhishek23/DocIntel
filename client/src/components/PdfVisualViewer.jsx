@@ -2349,7 +2349,7 @@ export default function PdfVisualViewer({
                     ? 'bg-pink-50 border-pink-300 text-pink-900'
                     : err.category === 'Numbers & Units' || err.category === 'Number Mismatch'
                     ? 'bg-cyan-50 border-cyan-300 text-cyan-950'
-                    : err.category === 'Formatting (Bold / Italic)'
+                    : err.category === 'Formatting (Bold / Italic)' || err.category === 'Formatting (Underline)'
                     ? 'bg-purple-50 border-purple-300 text-purple-900'
                     : 'bg-rose-50 border-rose-300 text-rose-900';
 

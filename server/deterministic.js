@@ -80,6 +80,7 @@ export function detectProofreadingErrors(textA, textB) {
     const tokens = [];
     let isBold = false;
     let isItalic = false;
+    let isUnderline = false;
     let currentColor = null;
     let colorCategory = 'black';
 
@@ -96,6 +97,10 @@ export function detectProofreadingErrors(textA, textB) {
         isItalic = true;
       } else if (lower.startsWith('</i')) {
         isItalic = false;
+      } else if (lower.startsWith('<u') && !lower.startsWith('</u')) {
+        isUnderline = true;
+      } else if (lower.startsWith('</u')) {
+        isUnderline = false;
       } else if (lower.startsWith('<font') || lower.startsWith('<c') || lower.startsWith('<span')) {
         const matchRgb = part.match(/color=["']?rgb\((\d+),\s*(\d+),\s*(\d+)\)["']?/i);
         const matchHex = part.match(/color=["']?#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})["']?/i);
@@ -123,6 +128,7 @@ export function detectProofreadingErrors(textA, textB) {
               clean: w.replace(/^[.,;:!?'"–—\-()\[\]]+|[.,;:!?'"–—\-()\[\]]+$/g, ''),
               isBold,
               isItalic,
+              isUnderline,
               color: currentColor,
               colorCategory,
               isSymbolOnly,
@@ -185,20 +191,30 @@ export function detectProofreadingErrors(textA, textB) {
 
     let boldDiff = tA.isBold !== tB.isBold;
     let italicDiff = tA.isItalic !== tB.isItalic;
+    let underlineDiff = !!tA.isUnderline !== !!tB.isUnderline;
 
     if (tA.isSymbolOnly && currentGroup) {
       const nextPair = pairs[pIdx + 1];
-      if (nextPair && (nextPair.tA.isBold !== nextPair.tB.isBold || nextPair.tA.isItalic !== nextPair.tB.isItalic)) {
+      if (
+        nextPair &&
+        (nextPair.tA.isBold !== nextPair.tB.isBold ||
+          nextPair.tA.isItalic !== nextPair.tB.isItalic ||
+          !!nextPair.tA.isUnderline !== !!nextPair.tB.isUnderline)
+      ) {
         boldDiff = currentGroup.boldDiff;
         italicDiff = currentGroup.italicDiff;
+        underlineDiff = currentGroup.underlineDiff;
       }
     }
 
-    if (boldDiff || italicDiff) {
+    if (boldDiff || italicDiff || underlineDiff) {
       if (
         currentGroup &&
         idxB <= currentGroup.lastIdxB + 2 &&
-        (tA.isSymbolOnly || (currentGroup.boldDiff === boldDiff && currentGroup.italicDiff === italicDiff))
+        (tA.isSymbolOnly ||
+          (currentGroup.boldDiff === boldDiff &&
+            currentGroup.italicDiff === italicDiff &&
+            currentGroup.underlineDiff === underlineDiff))
       ) {
         currentGroup.wordsA.push(tA.raw);
         currentGroup.wordsB.push(tB.raw);
@@ -214,10 +230,13 @@ export function detectProofreadingErrors(textA, textB) {
           lastIdxB: idxB,
           boldDiff,
           italicDiff,
+          underlineDiff,
           isBoldA: tA.isBold,
           isItalicA: tA.isItalic,
+          isUnderlineA: !!tA.isUnderline,
           isBoldB: tB.isBold,
           isItalicB: tB.isItalic,
+          isUnderlineB: !!tB.isUnderline,
         };
       }
     } else {
@@ -289,15 +308,21 @@ export function detectProofreadingErrors(textA, textB) {
     const stylesA = [];
     if (group.isBoldA) stylesA.push('Bold');
     if (group.isItalicA) stylesA.push('Italic');
+    if (group.isUnderlineA) stylesA.push('Underlined');
     const labelA = stylesA.length > 0 ? stylesA.join(' + ') : 'Regular';
 
     const stylesB = [];
     if (group.isBoldB) stylesB.push('Bold');
     if (group.isItalicB) stylesB.push('Italic');
+    if (group.isUnderlineB) stylesB.push('Underlined');
     const labelB = stylesB.length > 0 ? stylesB.join(' + ') : 'Regular';
 
     let diffType = 'style_mismatch';
-    if (!group.isItalicA && group.isItalicB) {
+    if (!group.isUnderlineA && group.isUnderlineB) {
+      diffType = 'underline_added';
+    } else if (group.isUnderlineA && !group.isUnderlineB) {
+      diffType = 'underline_removed';
+    } else if (!group.isItalicA && group.isItalicB) {
       diffType = 'italic_added';
     } else if (group.isItalicA && !group.isItalicB) {
       diffType = 'italic_removed';
@@ -314,7 +339,7 @@ export function detectProofreadingErrors(textA, textB) {
 
     errors.push({
       id: `proof_${errId++}`,
-      category: 'Formatting (Bold / Italic)',
+      category: group.underlineDiff ? 'Formatting (Underline)' : 'Formatting (Bold / Italic)',
       type: diffType,
       severity: 'high',
       expected: `${labelA}: "${phraseA}"`,

@@ -314,12 +314,33 @@ async function extractPdfText(buffer) {
       let largeImgObj = null;
       let imgTransform = null;
 
+      // Track transformation matrix and horizontal stroke lines for vector underlines
+      let ctm = [1, 0, 0, 1, 0, 0];
+      const ctmStack = [];
+      const underlineSegments = [];
+
+      function multiplyMatrix(m1, m2) {
+        return [
+          m1[0] * m2[0] + m1[1] * m2[2],
+          m1[0] * m2[1] + m1[1] * m2[3],
+          m1[2] * m2[0] + m1[3] * m2[2],
+          m1[2] * m2[1] + m1[3] * m2[3],
+          m1[4] * m2[0] + m1[5] * m2[2] + m2[4],
+          m1[4] * m2[1] + m1[5] * m2[3] + m2[5],
+        ];
+      }
+
+      function applyTransform(x, y, m) {
+        return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+      }
+
       for (let i = 0; i < opList.fnArray.length; i++) {
         const fn = opList.fnArray[i];
         const args = opList.argsArray[i];
 
         if (fn === pdfjs.OPS.transform) {
           currentTransform = args;
+          ctm = multiplyMatrix(ctm, args);
         } else if (fn === pdfjs.OPS.paintImageXObject) {
           const name = args[0];
           const img = page.objs.get(name);
@@ -329,8 +350,10 @@ async function extractPdfText(buffer) {
           }
         } else if (fn === pdfjs.OPS.save) {
           colorStack.push([...currentFill]);
+          ctmStack.push([...ctm]);
         } else if (fn === pdfjs.OPS.restore) {
           if (colorStack.length > 0) currentFill = colorStack.pop();
+          if (ctmStack.length > 0) ctm = ctmStack.pop();
         } else if (fn === pdfjs.OPS.setFillRGBColor || fn === pdfjs.OPS.setStrokeRGBColor) {
           let [r, g, b] = args;
           if (r <= 1 && g <= 1 && b <= 1 && (r > 0 || g > 0 || b > 0)) {
@@ -353,6 +376,64 @@ async function extractPdfText(buffer) {
           const g = Math.round(255 * (1 - m) * (1 - k));
           const b = Math.round(255 * (1 - y) * (1 - k));
           currentFill = [Math.max(0, Math.min(255, r)), Math.max(0, Math.min(255, g)), Math.max(0, Math.min(255, b))];
+        } else if (fn === pdfjs.OPS.constructPath) {
+          const [pathOps, pathArgs] = args || [];
+          if (Array.isArray(pathOps) && Array.isArray(pathArgs)) {
+            let pIdx = 0;
+            let lastX = 0, lastY = 0;
+            for (let j = 0; j < pathOps.length; j++) {
+              const op = pathOps[j];
+              if (op === 13) {
+                lastX = pathArgs[pIdx++];
+                lastY = pathArgs[pIdx++];
+              } else if (op === 14) {
+                const curX = pathArgs[pIdx++];
+                const curY = pathArgs[pIdx++];
+                const p1 = applyTransform(lastX, lastY, ctm);
+                const p2 = applyTransform(curX, curY, ctm);
+                if (Math.abs(p1[1] - p2[1]) <= 3.5 && Math.abs(p1[0] - p2[0]) >= 8) {
+                  underlineSegments.push({
+                    x1: Math.min(p1[0], p2[0]),
+                    x2: Math.max(p1[0], p2[0]),
+                    y: (p1[1] + p2[1]) / 2,
+                  });
+                }
+                lastX = curX;
+                lastY = curY;
+              } else if (op === 42) {
+                const rx = pathArgs[pIdx++];
+                const ry = pathArgs[pIdx++];
+                const rw = pathArgs[pIdx++];
+                const rh = pathArgs[pIdx++];
+                const p1 = applyTransform(rx, ry, ctm);
+                const p2 = applyTransform(rx + rw, ry + rh, ctm);
+                const h = Math.abs(p2[1] - p1[1]);
+                const w = Math.abs(p2[0] - p1[0]);
+                if (h <= 3.5 && w >= 8) {
+                  underlineSegments.push({
+                    x1: Math.min(p1[0], p2[0]),
+                    x2: Math.max(p1[0], p2[0]),
+                    y: (p1[1] + p2[1]) / 2,
+                  });
+                }
+              }
+            }
+          }
+        } else if (fn === pdfjs.OPS.rectangle) {
+          const [rx, ry, rw, rh] = args || [];
+          if (rx !== undefined && ry !== undefined && rw !== undefined && rh !== undefined) {
+            const p1 = applyTransform(rx, ry, ctm);
+            const p2 = applyTransform(rx + rw, ry + rh, ctm);
+            const h = Math.abs(p2[1] - p1[1]);
+            const w = Math.abs(p2[0] - p1[0]);
+            if (h <= 3.5 && w >= 8) {
+              underlineSegments.push({
+                x1: Math.min(p1[0], p2[0]),
+                x2: Math.max(p1[0], p2[0]),
+                y: (p1[1] + p2[1]) / 2,
+              });
+            }
+          }
         } else if (fn === pdfjs.OPS.showText || fn === pdfjs.OPS.showSpacedText) {
           const glyphs = args[0];
           let str = '';
@@ -522,6 +603,68 @@ async function extractPdfText(buffer) {
           if (matchedOpIdx !== -1) {
             matchedColor = textOps[matchedOpIdx].color;
             opCursor = matchedOpIdx + 1;
+          }
+        }
+
+        const itemX = item.transform[4];
+        const itemY = item.transform[5];
+        const itemW = item.width || 0;
+        const matchingUnderline = underlineSegments.find(
+          (u) => Math.abs(u.y - itemY) <= 4.5 && u.x1 <= itemX + 5 && u.x2 >= itemX + 10
+        );
+        if (matchingUnderline) {
+          if (matchingUnderline.x2 >= itemX + itemW - 6) {
+            isUnderline = true;
+          } else if (matchingUnderline.x2 < itemX + itemW - 12) {
+            const targetW = matchingUnderline.x2 - itemX;
+            let splitIdx = -1;
+            const matchingOp = textOps.find(
+              (op) => op.str && op.str.length >= 3 && item.str.startsWith(op.str)
+            );
+            if (matchingOp) {
+              splitIdx = matchingOp.str.length;
+            } else {
+              const approxIdx = Math.round(item.str.length * (targetW / (itemW || 1)));
+              const searchSlice = item.str.slice(0, Math.min(item.str.length, approxIdx + 6));
+              const lastPeriod = searchSlice.lastIndexOf('.');
+              if (lastPeriod !== -1 && Math.abs(lastPeriod - approxIdx) < 8) {
+                splitIdx = lastPeriod + 1;
+              } else {
+                const lastSpace = searchSlice.lastIndexOf(' ');
+                splitIdx = (lastSpace !== -1 && Math.abs(lastSpace - approxIdx) < 8) ? lastSpace : approxIdx;
+              }
+            }
+            if (splitIdx > 0 && splitIdx < item.str.length) {
+              const strUnderlined = item.str.slice(0, splitIdx);
+              const strRemaining = item.str.slice(splitIdx);
+              itemObjects.push({
+                str: strUnderlined,
+                x: itemX,
+                y: itemY,
+                width: targetW,
+                height: item.height || 10,
+                isBold,
+                isItalic,
+                isUnderline: true,
+                color: matchedColor,
+                colorCategory: getColorCategory(matchedColor),
+              });
+              itemObjects.push({
+                str: strRemaining,
+                x: itemX + targetW,
+                y: itemY,
+                width: Math.max(0, itemW - targetW),
+                height: item.height || 10,
+                isBold,
+                isItalic,
+                isUnderline: false,
+                color: matchedColor,
+                colorCategory: getColorCategory(matchedColor),
+              });
+              continue;
+            } else {
+              isUnderline = true;
+            }
           }
         }
 
